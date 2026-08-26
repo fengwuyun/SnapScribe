@@ -22,7 +22,7 @@ impl RuntimePaths {
     ///
     /// Missing pieces fail loud here so the caller can report one clear message.
     pub fn resolve(resource_dir: Option<&Path>) -> Result<Self, String> {
-        let mut bases = candidate_bases(resource_dir);
+        let bases = candidate_bases(resource_dir);
 
         let ffmpeg = find_file(&bases, "ffmpeg.exe")
             .or_else(find_on_path("ffmpeg.exe"))
