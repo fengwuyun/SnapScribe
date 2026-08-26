@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens mirror UI_DESIGN_SPEC.md §2 one-to-one.
+ * Do not add brand colors outside this file.
+ */
+:root {
+  --color-primary: #4353ff;
+  --color-primary-soft: #eef0ff;
+
+  --color-accent: #ff6b6b;
+  --color-accent-soft: #ffaaa5;
+
+  --color-bg: #f7f8fc;
+  --color-surface: #ffffff;
+  --color-surface-soft: #eef0ff;
+
+  --color-text-primary: #111111;
+  --color-text-secondary: #6f7785;
+  --color-text-tertiary: #9aa3b2;
+
+  --color-border: #e5e5ea;
+  --color-divider: #f0f0f5;
+
+  --color-success: #22a06b;
+  --color-warning: #e59b18;
+  --color-error: #d94f4f;
+
+  --shadow-sm: 0 2px 12px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 12px 36px rgba(17, 17, 17, 0.1);
+  --shadow-primary: 0 16px 36px rgba(67, 83, 255, 0.2);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-bg font-sans text-text-primary antialiased;
+    overflow: hidden;
+    user-select: none;
+  }
+}
