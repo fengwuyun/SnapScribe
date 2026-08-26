@@ -44,13 +44,25 @@ impl RuntimePaths {
         let repo_root = option_env!("CARGO_MANIFEST_DIR")
             .map(|m| Path::new(m).parent().expect("manifest parent").to_path_buf());
 
-        let asr_exe = find_in(&candidates, &["llama-funasr-sensevoice.exe"]).or_else(|| {
-            repo_root
-                .as_ref()
-                .map(|r| r.join("funasr-llamacpp-windows-x64"))
-                .filter(|d| d.is_dir())
-                .and_then(|d| first_existing(&d, &["llama-funasr-sensevoice.exe"]))
-        });
+        // Development fallback: bundled binaries live in src-tauri/resources/bin
+        // even before packaging puts them beside the executable.
+        let mut bin_candidates = candidates.clone();
+        if let Some(root) = &repo_root {
+            bin_candidates.push(root.join("src-tauri").join("resources").join("bin"));
+            bin_candidates.push(root.join("funasr-llamacpp-windows-x64"));
+        }
+
+        let mut missing: Vec<String> = Vec::new();
+
+        let ffmpeg = find_in(&bin_candidates, &["ffmpeg.exe"])
+            .or_else(find_ffmpeg_on_path)
+            .ok_or_else(|| "未找到 ffmpeg（已尝试打包资源与系统 PATH）".to_string())?;
+        let ffprobe = ffmpeg.with_file_name("ffprobe.exe");
+        if !ffprobe.is_file() {
+            missing.push(format!("ffprobe（期望位于 {}）", ffprobe.display()));
+        }
+
+        let asr_exe = find_in(&bin_candidates, &["llama-funasr-sensevoice.exe"]);
         let asr_exe = match asr_exe {
             Some(p) => p,
             None => {
