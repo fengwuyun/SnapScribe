@@ -16,3 +16,4 @@ scripts/ts-inspect.cjs
 src/__probe*.ts
 src/lib/tauri_copy.ts
 src/lib/tauri_bisect.ts
+testdata/*.png
