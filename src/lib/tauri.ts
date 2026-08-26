@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { EventCallback } from "@tauri-apps/api/event";
+import { listen, type EventCallback } from "@tauri-apps/api/event";
 import type {
   HistoryEntry,
   MediaInfo,
@@ -61,19 +61,19 @@ export function historyDirPath(): Promise<string> {
 }
 
 export function listenProgress(onEvent: EventCallback<ProgressEvent>) {
-  return import("@tauri-apps/api/event").then((m) => m.listen("transcript://progress", onEvent));
+  return listen("transcript://progress", onEvent);
 }
 
 export function listenSegments(onEvent: EventCallback<SegmentsEvent>) {
-  return import("@tauri-apps/api/event").then((m) => m.listen("transcript://segments", onEvent));
+  return listen("transcript://segments", onEvent);
 }
 
 export function listenCompleted<T>(onEvent: EventCallback<{ result: T }>) {
-  return import("@tauri-apps/api/event").then((m) => m.listen("transcript://completed", onEvent));
+  return listen("transcript://completed", onEvent);
 }
 
 export function listenFailed(onEvent: EventCallback<{ message: string }>) {
-  return import("@tauri-apps/api/event").then((m) => m.listen("transcript://failed", onEvent));
+  return listen("transcript://failed", onEvent);
 }
 
 /** JSON form expected by the export commands. */

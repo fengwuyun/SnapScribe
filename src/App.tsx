@@ -1,7 +1,5 @@
+import Home from "@/pages/Home";
+
 export default function App() {
-  return (
-    <div className="flex h-full items-center justify-center">
-      <span className="text-lg font-semibold">SnapScribe</span>
-    </div>
-  );
+  return <Home />;
 }
