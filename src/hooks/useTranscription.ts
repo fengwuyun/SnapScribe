@@ -49,11 +49,9 @@ export const initialTranscriptionState: TranscriptionState = {
   error: null,
 };
 
-/** Events from a superseded job are dropped instead of corrupting the current one.
- *  A null jobId during `transcribing` adopts the arriving event's id: backend
- *  events can race ahead of the `started` dispatch. */
-function matchJob(state: TranscriptionState, jobId: string): boolean {
-  return state.jobId === null || state.jobId === jobId;
+/** Events from a superseded job are dropped instead of corrupting the current one. */
+function isStale(state: TranscriptionState, jobId: string): boolean {
+  return state.jobId !== jobId;
 }
 
 export function transcriptionReducer(
@@ -82,13 +80,12 @@ export function transcriptionReducer(
         error: null,
       };
     case "progress":
-      if (state.phase !== "transcribing" || !matchJob(state, action.jobId)) return state;
-      return { ...state, jobId: state.jobId ?? action.jobId, progress: action.event };
+      if (state.phase !== "transcribing" || isStale(state, action.jobId)) return state;
+      return { ...state, progress: action.event };
     case "segments":
-      if (state.phase !== "transcribing" || !matchJob(state, action.jobId)) return state;
+      if (state.phase !== "transcribing" || isStale(state, action.jobId)) return state;
       return {
         ...state,
-        jobId: state.jobId ?? action.jobId,
         segments: [...state.segments, ...action.segments],
       };
     case "completed":
@@ -168,7 +165,6 @@ export function useTranscription() {
     const current = stateRef.current;
     if (current.phase !== "ready" || !current.filePath) return;
     const jobId = await startTranscription(current.filePath);
-    // The reducer adopts events arriving before this dispatch via matchJob.
     dispatch({ type: "started", jobId });
   }, []);
 

@@ -80,6 +80,21 @@ describe("transcriptionReducer", () => {
     expect(state.progress?.percent).toBe(10);
   });
 
+  it("ignores events that race ahead of the started dispatch", () => {
+    // Backend may emit before the UI dispatches `started`; the event is dropped
+    // and the next in-job event takes over normally.
+    let state = readyState();
+    state = transcriptionReducer(state, {
+      type: "segments",
+      jobId: "job-early",
+      segments: [segment("race")],
+    });
+    expect(state.phase).toBe("ready");
+    expect(state.segments).toEqual([]);
+    state = transcriptionReducer(state, { type: "started", jobId: "job-1" });
+    expect(state.segments).toEqual([]);
+  });
+
   it("completes with authoritative result segments", () => {
     let state = transcriptionReducer(readyState(), { type: "started", jobId: "job-1" });
     state = transcriptionReducer(state, {
