@@ -1,7 +1,10 @@
 node_modules/
 dist/
+.npm-cache/
+.cargo-home/
 src-tauri/target/
 src-tauri/gen/schemas/
 models/*.gguf
 *.log
 .vite/
+funasr-llamacpp-windows-x64/
