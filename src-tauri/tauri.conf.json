@@ -32,6 +32,9 @@
     "active": true,
     "targets": ["nsis"],
     "icon": ["icons/icon.ico"],
-    "resources": []
+    "resources": [
+      "resources/bin/*",
+      "resources/models/*"
+    ]
   }
 }

@@ -5,6 +5,14 @@ dist/
 src-tauri/target/
 src-tauri/gen/schemas/
 models/*.gguf
+src-tauri/resources/models/*.gguf
+src-tauri/resources/bin/*.exe
 *.log
 .vite/
 funasr-llamacpp-windows-x64/
+.ffmpeg-tmp/
+.diag_quarantine/
+scripts/ts-inspect.cjs
+src/__probe*.ts
+src/lib/tauri_copy.ts
+src/lib/tauri_bisect.ts

@@ -17,6 +17,10 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     host: host || false,
+    watch: {
+      // Build outputs change while cargo runs; watching them aborts vite (EBUSY).
+      ignored: ["**/src-tauri/target/**", "**/.cargo-home/**", "**/models/**"],
+    },
   },
   envPrefix: ["VITE_", "TAURI_ENV_"],
   build: {

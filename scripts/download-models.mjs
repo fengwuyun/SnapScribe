@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import https from "node:https";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const outDir = join(__dirname, "..", "models");
+const outDir = join(__dirname, "..", "src-tauri", "resources", "models");
 const base = process.argv[2] ?? "https://hf-mirror.com";
 
 const files = [
