@@ -89,10 +89,12 @@ interface HistoryEntry { fileName: string; sizeBytes: number; modifiedMs: number
 
 | 通道 | 载荷 | 说明 |
 |---|---|---|
-| `transcript://progress` | `{ stage:"preparing"\|"splitting"\|"transcribing", percent, processedSeconds, totalSeconds, segmentIndex, segmentCount }` | 进度 |
+| `transcript://progress` | `{ jobId, stage:"preparing"\|"splitting"\|"transcribing", percent, processedSeconds, totalSeconds, segmentIndex, segmentCount }` | 进度 |
 | `transcript://segments` | `{ jobId, segments: TranscriptSegment[] }` | 增量新完成的段落 |
 | `transcript://completed` | `{ result: TranscriptResult }` | 全部完成 |
 | `transcript://failed` | `{ message }` | 失败 |
+
+所有事件载荷均带 `jobId`（completed 除外），前端据此丢弃过期任务的事件。
 
 ## 6. 应用状态机
 
