@@ -66,11 +66,13 @@ fn candidate_bases(resource_dir: Option<&Path>) -> Vec<PathBuf> {
     if let Some(res) = resource_dir {
         bases.push(res.to_path_buf());
         bases.push(res.join("resources"));
+        bases.push(res.join("resources").join("bin"));
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             bases.push(dir.to_path_buf());
             bases.push(dir.join("resources"));
+            bases.push(dir.join("resources").join("bin"));
             bases.push(dir.join("bin"));
         }
     }
@@ -137,5 +139,41 @@ mod tests {
         let found = find_file(&dirs, "snapscribe-probe.txt");
         assert!(found.is_some_and(|p| p.is_file()));
         std::fs::remove_file(std::env::temp_dir().join("snapscribe-probe.txt")).ok();
+    }
+
+    /// Simulates the NSIS install layout `<install>/resources/{bin,models}` and
+    /// asserts every runtime is found inside that directory tree.
+    #[test]
+    fn resolves_installed_layout_under_resources() {
+        let fake = std::env::temp_dir().join(format!(
+            "snapscribe-install-test-{}",
+            std::process::id()
+        ));
+        let bin = fake.join("resources").join("bin");
+        let models = fake.join("resources").join("models");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(&models).unwrap();
+        for name in [
+            "ffmpeg.exe",
+            "ffprobe.exe",
+            "llama-funasr-sensevoice.exe",
+        ] {
+            std::fs::write(bin.join(name), b"x").unwrap();
+        }
+        for name in ["sensevoice-small-q8.gguf", "fsmn-vad.gguf"] {
+            std::fs::write(models.join(name), b"x").unwrap();
+        }
+
+        let runtime = RuntimePaths::resolve(Some(&fake)).expect("installed layout should resolve");
+        assert!(
+            runtime.ffmpeg.starts_with(&fake),
+            "ffmpeg must come from the installed layout, got {}",
+            runtime.ffmpeg.display()
+        );
+        assert!(runtime.ffprobe.starts_with(&fake));
+        assert!(runtime.asr_exe.starts_with(&fake));
+        assert!(runtime.asr_model.starts_with(&fake));
+        assert!(runtime.vad_model.starts_with(&fake));
+        std::fs::remove_dir_all(&fake).ok();
     }
 }
