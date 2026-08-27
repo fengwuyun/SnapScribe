@@ -33,8 +33,9 @@ pub fn build_args(asr_exe_model: &Path, vad_model: &Path, audio: &Path) -> Vec<S
 /// Spawn the ASR process for one segment. The caller owns the child so that
 /// cancellation can kill it mid-run.
 pub fn spawn(asr_exe: &Path, asr_model: &Path, vad_model: &Path, audio: &Path) -> Result<Child, String> {
-    Command::new(asr_exe)
-        .args(build_args(asr_model, vad_model, audio))
+    let mut cmd = Command::new(asr_exe);
+    crate::proc::hide_console(&mut cmd);
+    cmd.args(build_args(asr_model, vad_model, audio))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

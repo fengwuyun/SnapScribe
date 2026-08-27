@@ -40,7 +40,9 @@ pub fn run_extract_split(ffmpeg: &Path, input: &Path, temp_dir: &Path) -> Result
     let pattern = temp_dir.join("seg_%04d.wav");
 
     let args = build_segment_args(input, &pattern);
-    let output = Command::new(ffmpeg)
+    let mut cmd = Command::new(ffmpeg);
+    crate::proc::hide_console(&mut cmd);
+    let output = cmd
         .args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

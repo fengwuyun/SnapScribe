@@ -9,6 +9,7 @@ mod history;
 mod media;
 mod model;
 mod pipeline;
+mod proc;
 mod runtime;
 
 use commands::AppState;

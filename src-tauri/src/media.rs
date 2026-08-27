@@ -5,7 +5,9 @@ use crate::model::MediaInfo;
 
 /// Read media duration via ffprobe and combine it with file metadata.
 pub fn probe(ffprobe: &Path, input: &Path) -> Result<MediaInfo, String> {
-    let output = Command::new(ffprobe)
+    let mut cmd = Command::new(ffprobe);
+    crate::proc::hide_console(&mut cmd);
+    let output = cmd
         .args([
             "-v",
             "error",
