@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod ai;
+mod ai_service_store;
 mod asr;
 mod commands;
 mod export;
@@ -66,6 +67,14 @@ fn main() {
             commands::open_repository,
             commands::settings_save,
             commands::ai_test_connection,
+            commands::ai_service_get,
+            commands::ai_instruction_save,
+            commands::ai_model_create,
+            commands::ai_model_update,
+            commands::ai_model_delete,
+            commands::ai_model_reorder,
+            commands::ai_model_set_enabled,
+            commands::ai_model_test,
             commands::ai_generate_summary,
         ])
         .run(tauri::generate_context!())

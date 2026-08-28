@@ -10,6 +10,10 @@ import type {
 } from "@/types/transcript";
 import type {
   AISummary,
+  AIModelConfig,
+  AIModelDraft,
+  AIModelStatus,
+  AIServiceConfig,
   AboutInfo,
   AppSettings,
   ConnectionResult,
@@ -160,6 +164,38 @@ export function aiTestConnection(settings: AppSettings): Promise<ConnectionResul
 
 export function aiGenerateSummary(projectId: string): Promise<AISummary> {
   return invoke("ai_generate_summary", { projectId });
+}
+
+export function aiServiceGet(): Promise<AIServiceConfig> {
+  return invoke("ai_service_get");
+}
+
+export function aiInstructionSave(instruction: string): Promise<AIServiceConfig> {
+  return invoke("ai_instruction_save", { instruction });
+}
+
+export function aiModelCreate(draft: AIModelDraft): Promise<AIModelConfig> {
+  return invoke("ai_model_create", { draft });
+}
+
+export function aiModelUpdate(modelId: string, draft: AIModelDraft): Promise<AIModelConfig> {
+  return invoke("ai_model_update", { modelId, draft });
+}
+
+export function aiModelDelete(modelId: string): Promise<void> {
+  return invoke("ai_model_delete", { modelId });
+}
+
+export function aiModelReorder(orderedIds: string[]): Promise<AIServiceConfig> {
+  return invoke("ai_model_reorder", { orderedIds });
+}
+
+export function aiModelSetEnabled(modelId: string, enabled: boolean): Promise<AIModelConfig> {
+  return invoke("ai_model_set_enabled", { modelId, enabled });
+}
+
+export function aiModelTest(draft: AIModelDraft): Promise<AIModelStatus> {
+  return invoke("ai_model_test", { draft });
 }
 
 export function recordingStart(): Promise<RecordingStartResult> {

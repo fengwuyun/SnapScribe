@@ -16,6 +16,18 @@ impl SecretStore {
         }
     }
 
+    pub fn for_model(config_dir: &Path, model_id: &str) -> Self {
+        let safe_id = model_id
+            .chars()
+            .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '-')
+            .collect::<String>();
+        Self {
+            path: config_dir
+                .join("credentials")
+                .join(format!("ai-model-{safe_id}.dpapi")),
+        }
+    }
+
     pub fn has_key(&self) -> bool {
         self.path.is_file()
     }

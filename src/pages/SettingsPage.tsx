@@ -1,20 +1,46 @@
-import { useEffect, useState } from "react";
-import { CheckCircle2, ExternalLink, Github, XCircle } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ExternalLink, Github } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import * as ipc from "@/lib/tauri";
+import { settingsSections, type SettingsSectionId } from "@/lib/settingsNavigation";
 import type { AboutInfo, AppSettings } from "@/types/project";
+
+export function SettingsPageHeader({ activeSection, onNavigate }: { activeSection: SettingsSectionId; onNavigate: (id: SettingsSectionId) => void }) {
+  return <header className="-mx-2 bg-bg px-2 pt-8">
+    <div>
+      <h1 className="text-2xl font-bold">设置</h1>
+      <p className="mt-1 text-sm text-text-secondary">管理本地文件存储与应用信息</p>
+    </div>
+    <nav aria-label="设置页面导航" className="mt-5 flex gap-8 border-b border-divider">
+      {settingsSections.map((item) => <button key={item.id} type="button" aria-current={activeSection === item.id ? "page" : undefined} onClick={() => onNavigate(item.id)} className={`border-b-2 px-1 pb-3 text-sm transition-colors duration-150 ${activeSection === item.id ? "border-primary font-semibold text-primary" : "border-transparent text-text-secondary hover:text-text-primary"}`}>{item.label}</button>)}
+    </nav>
+  </header>;
+}
 
 export function SettingsPage() {
   const [draft, setDraft] = useState<AppSettings | null>(null);
   const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
   const [message, setMessage] = useState("");
-  const [connectionState, setConnectionState] = useState<{ status: "idle" | "testing" | "success" | "failure"; message: string }>({ status: "idle", message: "" });
   const [about, setAbout] = useState<AboutInfo | null>(null);
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>("storage");
+  const sectionRefs = useRef<Record<SettingsSectionId, HTMLElement | null>>({ storage: null, about: null });
 
   useEffect(() => {
     void Promise.all([ipc.settingsGet(), ipc.aboutGet()]).then(([settings, info]) => { setDraft(settings); setAbout(info); }).catch((error) => setMessage(String(error)));
   }, []);
+
+  useEffect(() => {
+    if (!draft) return;
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+      if (visible?.target.id) setActiveSection(visible.target.id as SettingsSectionId);
+    }, { rootMargin: "-64px 0px -52% 0px", threshold: [0.05, 0.25, 0.5] });
+    settingsSections.forEach(({ id }) => {
+      const section = sectionRefs.current[id];
+      if (section) observer.observe(section);
+    });
+    return () => observer.disconnect();
+  }, [draft, about]);
 
   if (!draft) return <p className={message ? "text-sm text-error" : "text-sm text-text-secondary"}>{message || "正在加载设置…"}</p>;
 
@@ -32,33 +58,20 @@ export function SettingsPage() {
     }
   }
 
-  async function testConnection() {
-    setTesting(true);
-    setConnectionState({ status: "testing", message: "正在连接…" });
-    try {
-      const result = await ipc.aiTestConnection(draft!);
-      setConnectionState({ status: result.ok ? "success" : "failure", message: result.message });
-    } catch (error) {
-      setConnectionState({ status: "failure", message: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setTesting(false);
-    }
-  }
-
-  function updateAI(next: Partial<AppSettings["ai"]>) {
-    setDraft({ ...draft!, ai: { ...draft!.ai, ...next } });
-    setConnectionState({ status: "idle", message: "" });
-  }
-
   async function chooseDataRoot() {
     const path = await ipc.selectDirectory();
     if (path) setDraft({ ...draft!, dataRoot: path });
   }
 
-  return <div className="mx-auto max-w-[860px]">
-    <h1 className="text-2xl font-bold">设置</h1>
+  function navigateToSection(id: SettingsSectionId) {
+    setActiveSection(id);
+    sectionRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  return <div className="mx-auto max-w-[900px] pb-8">
+    <SettingsPageHeader activeSection={activeSection} onNavigate={navigateToSection} />
     <div className="mt-6 grid gap-6">
-      <section className="rounded-lg border border-line bg-surface p-6">
+      <section id="storage" ref={(node) => { sectionRefs.current.storage = node; }} className="scroll-mt-16 rounded-lg border border-line bg-surface p-6 shadow-sm">
         <h2 className="text-lg font-semibold">文件存储</h2>
         <label className="mt-5 block text-sm font-medium">转录数据保存位置</label>
         <div className="mt-2 flex gap-2"><input value={draft.dataRoot} onChange={(event) => setDraft({ ...draft, dataRoot: event.target.value })} className="h-10 min-w-0 flex-1 rounded-md border border-line px-3 text-sm outline-none focus:border-primary" /><Button variant="secondary" onClick={() => void chooseDataRoot()}>选择位置</Button></div>
@@ -71,26 +84,7 @@ export function SettingsPage() {
         </label>
         <p className="mt-3 text-xs text-text-tertiary">软件录音默认保存，可在项目详情中单独删除，不影响文本和总结。</p>
       </section>
-      <section className="rounded-lg border border-line bg-surface p-6">
-        <h2 className="text-lg font-semibold">AI 服务</h2>
-        <div className="mt-5 grid gap-4">
-          <label className="text-sm font-medium">服务类型<input value="OpenAI Compatible" disabled className="mt-2 h-10 w-full rounded-md border border-line bg-bg px-3 text-sm" /></label>
-          <label className="text-sm font-medium">API Base URL<input value={draft.ai.baseUrl} onChange={(event) => updateAI({ baseUrl: event.target.value })} placeholder="https://api.openai.com/v1" className="mt-2 h-10 w-full rounded-md border border-line px-3 text-sm outline-none focus:border-primary" /></label>
-          <label className="text-sm font-medium">API Key
-            <input type="password" value={draft.apiKey ?? ""} onChange={(event) => { setDraft({ ...draft, apiKey: event.target.value, clearApiKey: false }); setConnectionState({ status: "idle", message: "" }); }} placeholder={draft.ai.hasApiKey ? "已保存，留空保持不变" : "输入 API Key"} className="mt-2 h-10 w-full rounded-md border border-line px-3 text-sm outline-none focus:border-primary" />
-          </label>
-          {draft.ai.hasApiKey && <label className="flex items-center gap-2 text-xs text-text-secondary"><input type="checkbox" checked={draft.clearApiKey ?? false} onChange={(event) => setDraft({ ...draft, clearApiKey: event.target.checked, apiKey: event.target.checked ? "" : draft.apiKey })} />保存时清除已存 API Key</label>}
-          <label className="text-sm font-medium">模型名称<input value={draft.ai.model} onChange={(event) => updateAI({ model: event.target.value })} placeholder="gpt-4o-mini" className="mt-2 h-10 w-full rounded-md border border-line px-3 text-sm outline-none focus:border-primary" /></label>
-          <div className="flex min-h-10 items-center gap-3">
-            <Button variant="secondary" loading={testing} onClick={() => void testConnection()}>测试连接</Button>
-            {connectionState.status === "testing" && <span className="text-xs font-medium text-text-secondary">{connectionState.message}</span>}
-            {connectionState.status === "success" && <span className="flex items-center gap-1.5 text-xs font-semibold text-success"><CheckCircle2 className="size-4" />{connectionState.message}</span>}
-            {connectionState.status === "failure" && <span className="flex min-w-0 items-center gap-1.5 text-xs font-semibold text-error"><XCircle className="size-4 shrink-0" /><span className="truncate" title={connectionState.message}>{connectionState.message}</span></span>}
-            {connectionState.status === "idle" && <span className="text-xs text-text-tertiary">测试不会自动保存设置。</span>}
-          </div>
-        </div>
-      </section>
-      {about && <section className="rounded-lg border border-line bg-surface p-6">
+      {about && <section id="about" ref={(node) => { sectionRefs.current.about = node; }} className="scroll-mt-16 rounded-lg border border-line bg-surface p-6 shadow-sm">
         <h2 className="text-lg font-semibold">关于 SnapScribe</h2>
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <div><p className="text-xs text-text-tertiary">当前版本</p><p className="mt-1 font-mono text-sm font-semibold">v{about.version}</p></div>

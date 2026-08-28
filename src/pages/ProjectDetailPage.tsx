@@ -10,7 +10,7 @@ import * as ipc from "@/lib/tauri";
 import type { ProjectDetail, TranscriptionJobStatus } from "@/types/project";
 import type { ProgressEvent, TranscriptSegment } from "@/types/transcript";
 
-export function ProjectDetailPage({ projectId, onBack }: { projectId: string; onBack: () => void }) {
+export function ProjectDetailPage({ projectId, onBack, onConfigureAI }: { projectId: string; onBack: () => void; onConfigureAI: () => void }) {
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [tab, setTab] = useState<"transcript" | "summary">("transcript");
   const [query, setQuery] = useState("");
@@ -139,6 +139,16 @@ export function ProjectDetailPage({ projectId, onBack }: { projectId: string; on
   }
 
   async function generateSummary() {
+    try {
+      const config = await ipc.aiServiceGet();
+      if (!config.models.some((model) => model.enabled)) {
+        onConfigureAI();
+        return;
+      }
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : String(err));
+      return;
+    }
     setGeneratingSummary(true);
     setMessage("");
     try {
@@ -146,7 +156,9 @@ export function ProjectDetailPage({ projectId, onBack }: { projectId: string; on
       await load();
       setMessage("AI 总结已生成");
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err));
+      const reason = err instanceof Error ? err.message : String(err);
+      if (reason.includes("NO_AI_MODELS_CONFIGURED")) onConfigureAI();
+      else setMessage(reason);
     } finally {
       setGeneratingSummary(false);
     }

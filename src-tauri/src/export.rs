@@ -111,6 +111,8 @@ mod tests {
             key_points: vec!["要点一".into(), "要点二".into()],
             action_items: vec!["跟进".into()],
             model: "model".into(),
+            model_config_id: None,
+            model_name: None,
         };
         assert_eq!(
             build_summary_txt(&summary),

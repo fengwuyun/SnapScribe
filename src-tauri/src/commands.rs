@@ -6,12 +6,14 @@ use std::thread::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
+use crate::ai_service_store::AIServiceStore;
 use crate::export;
 use crate::history;
 use crate::media;
 use crate::model::{
-    AISummary, AboutInfo, AppSettings, ConnectionResult, ProjectDetail, ProjectListItem,
-    ProjectSort, StartProjectResult, TranscriptionJobStatus,
+    AIAuthType, AIModelConfig, AIModelDraft, AIModelStatus, AIServiceConfig, AISummary, AboutInfo,
+    AppSettings, ConnectionResult, ProjectDetail, ProjectListItem, ProjectSort, StartProjectResult,
+    TranscriptionJobStatus,
 };
 use crate::model::{
     CanceledEvent, CompletedEvent, FailedEvent, RecordingLevelEvent, RecordingStartResult,
@@ -522,11 +524,102 @@ pub fn ai_test_connection(
 }
 
 #[tauri::command]
+pub fn ai_service_get(app: AppHandle) -> Result<AIServiceConfig, String> {
+    let store = ensure_ai_service_migrated(&app)?;
+    hydrate_ai_config(&store)
+}
+
+#[tauri::command]
+pub fn ai_instruction_save(app: AppHandle, instruction: String) -> Result<AIServiceConfig, String> {
+    let store = ensure_ai_service_migrated(&app)?;
+    store.save_instruction(&instruction)?;
+    hydrate_ai_config(&store)
+}
+
+#[tauri::command]
+pub fn ai_model_create(app: AppHandle, draft: AIModelDraft) -> Result<AIModelConfig, String> {
+    let store = ensure_ai_service_migrated(&app)?;
+    if draft.auth_type != AIAuthType::None
+        && draft
+            .api_key
+            .as_deref()
+            .is_none_or(|key| key.trim().is_empty())
+    {
+        return Err("请填写 API Key".to_string());
+    }
+    let model = store.create_model(&draft)?;
+    save_model_secret(&store, &model.id, &draft)?;
+    hydrate_ai_model(&store, model)
+}
+
+#[tauri::command]
+pub fn ai_model_update(
+    app: AppHandle,
+    model_id: String,
+    draft: AIModelDraft,
+) -> Result<AIModelConfig, String> {
+    let store = ensure_ai_service_migrated(&app)?;
+    let model = store.update_model(&model_id, &draft)?;
+    save_model_secret(&store, &model.id, &draft)?;
+    hydrate_ai_model(&store, model)
+}
+
+#[tauri::command]
+pub fn ai_model_delete(app: AppHandle, model_id: String) -> Result<(), String> {
+    let store = ensure_ai_service_migrated(&app)?;
+    store.delete_model(&model_id)?;
+    SecretStore::for_model(store.config_dir(), &model_id).clear()
+}
+
+#[tauri::command]
+pub fn ai_model_reorder(
+    app: AppHandle,
+    ordered_ids: Vec<String>,
+) -> Result<AIServiceConfig, String> {
+    let store = ensure_ai_service_migrated(&app)?;
+    store.reorder_models(&ordered_ids)?;
+    hydrate_ai_config(&store)
+}
+
+#[tauri::command]
+pub fn ai_model_set_enabled(
+    app: AppHandle,
+    model_id: String,
+    enabled: bool,
+) -> Result<AIModelConfig, String> {
+    let store = ensure_ai_service_migrated(&app)?;
+    let model = store.set_enabled(&model_id, enabled)?;
+    hydrate_ai_model(&store, model)
+}
+
+#[tauri::command]
+pub fn ai_model_test(app: AppHandle, draft: AIModelDraft) -> Result<AIModelStatus, String> {
+    let store = ensure_ai_service_migrated(&app)?;
+    let key = if draft.auth_type == AIAuthType::None {
+        String::new()
+    } else if let Some(key) = draft
+        .api_key
+        .as_deref()
+        .filter(|key| !key.trim().is_empty())
+    {
+        key.trim().to_string()
+    } else if let Some(id) = draft.id.as_deref() {
+        SecretStore::for_model(store.config_dir(), id).load()?
+    } else {
+        return Err("请填写 API Key".to_string());
+    };
+    let status = crate::ai::test_model(&draft, &key);
+    if let Some(id) = draft.id.as_deref() {
+        store.update_status(id, status.clone())?;
+    }
+    Ok(status)
+}
+
+#[tauri::command]
 pub fn ai_generate_summary(app: AppHandle, project_id: String) -> Result<AISummary, String> {
-    let settings = settings_get(app.clone())?;
-    let key = resolve_api_key(&app, None)?;
-    let store = project_store(&app)?;
-    let detail = store.read_detail(&project_id)?;
+    let ai_store = ensure_ai_service_migrated(&app)?;
+    let projects = project_store(&app)?;
+    let detail = projects.read_detail(&project_id)?;
     let transcript = detail
         .transcript
         .segments
@@ -535,14 +628,14 @@ pub fn ai_generate_summary(app: AppHandle, project_id: String) -> Result<AISumma
         .filter(|text| !text.is_empty())
         .collect::<Vec<_>>()
         .join("\n");
-    let summary = crate::ai::generate_summary(
-        &settings.ai,
-        &key,
+    let summary = crate::ai::generate_summary_with_failover(
+        &ai_store,
+        ai_store.config_dir(),
         &project_id,
         detail.transcript.revision,
         &transcript,
     )?;
-    store.save_summary(&project_id, &summary)?;
+    projects.save_summary(&project_id, &summary)?;
     Ok(summary)
 }
 
@@ -719,6 +812,56 @@ fn project_store(app: &AppHandle) -> Result<ProjectStore, String> {
 
 fn secret_store(app: &AppHandle) -> Result<SecretStore, String> {
     Ok(SecretStore::new(&config_dir(app)?))
+}
+
+fn ensure_ai_service_migrated(app: &AppHandle) -> Result<AIServiceStore, String> {
+    let store = AIServiceStore::new(config_dir(app)?);
+    let legacy_settings = settings_store(app)?.load()?;
+    if let Some(model) = store.migrate_legacy(&legacy_settings.ai)? {
+        let legacy_secret = secret_store(app)?;
+        if legacy_secret.has_key() {
+            SecretStore::for_model(store.config_dir(), &model.id).save(&legacy_secret.load()?)?;
+        }
+    }
+    Ok(store)
+}
+
+fn hydrate_ai_config(store: &AIServiceStore) -> Result<AIServiceConfig, String> {
+    let mut config = store.load()?;
+    for model in &mut config.models {
+        model.has_api_key = model.auth_type == AIAuthType::None
+            || SecretStore::for_model(store.config_dir(), &model.id).has_key();
+    }
+    Ok(config)
+}
+
+fn hydrate_ai_model(
+    store: &AIServiceStore,
+    mut model: AIModelConfig,
+) -> Result<AIModelConfig, String> {
+    model.has_api_key = model.auth_type == AIAuthType::None
+        || SecretStore::for_model(store.config_dir(), &model.id).has_key();
+    Ok(model)
+}
+
+fn save_model_secret(
+    store: &AIServiceStore,
+    model_id: &str,
+    draft: &AIModelDraft,
+) -> Result<(), String> {
+    let secret = SecretStore::for_model(store.config_dir(), model_id);
+    if draft.auth_type == AIAuthType::None || draft.clear_api_key {
+        secret.clear()?;
+    } else if let Some(key) = draft
+        .api_key
+        .as_deref()
+        .filter(|key| !key.trim().is_empty())
+    {
+        secret.save(key)?;
+    } else if !secret.has_key() {
+        return Err("请填写 API Key".to_string());
+    }
+    Ok(())
 }
 
 fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {

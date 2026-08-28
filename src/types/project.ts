@@ -51,6 +51,59 @@ export interface AISummary {
   keyPoints: string[];
   actionItems: string[];
   model: string;
+  modelConfigId?: string;
+  modelName?: string;
+}
+
+export type AIProtocol = "openai-chat";
+export type AIEndpointMode = "auto" | "full-url" | "custom-path";
+export type AIAuthType = "bearer" | "x-api-key" | "custom-header" | "none";
+export type AIModelStatusKind = "untested" | "available" | "timeout" | "auth-failed" | "rate-limited" | "service-error" | "config-error" | "invalid-response";
+
+export interface AIModelStatus {
+  status: AIModelStatusKind;
+  message?: string;
+  checkedAt?: string;
+  responseTimeMs?: number;
+}
+
+export interface AIModelConfig {
+  id: string;
+  name: string;
+  protocol: AIProtocol;
+  baseUrl: string;
+  modelId: string;
+  endpointMode: AIEndpointMode;
+  customPath?: string;
+  authType: AIAuthType;
+  authHeader?: string;
+  timeoutSecs: number;
+  enabled: boolean;
+  order: number;
+  hasApiKey: boolean;
+  lastStatus: AIModelStatus;
+}
+
+export interface AIModelDraft {
+  id?: string;
+  name: string;
+  protocol: AIProtocol;
+  baseUrl: string;
+  modelId: string;
+  endpointMode: AIEndpointMode;
+  customPath?: string;
+  authType: AIAuthType;
+  authHeader?: string;
+  timeoutSecs: number;
+  enabled: boolean;
+  apiKey?: string;
+  clearApiKey?: boolean;
+}
+
+export interface AIServiceConfig {
+  schemaVersion: number;
+  customInstruction: string;
+  models: AIModelConfig[];
 }
 
 export interface ProjectListItem {

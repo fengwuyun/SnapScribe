@@ -42,6 +42,129 @@ pub struct ConnectionResult {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AIProtocol {
+    OpenAIChat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AIEndpointMode {
+    Auto,
+    FullUrl,
+    CustomPath,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AIAuthType {
+    Bearer,
+    XApiKey,
+    CustomHeader,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AIModelStatusKind {
+    Untested,
+    Available,
+    Timeout,
+    AuthFailed,
+    RateLimited,
+    ServiceError,
+    ConfigError,
+    InvalidResponse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AIModelStatus {
+    pub status: AIModelStatusKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_time_ms: Option<u64>,
+}
+
+impl Default for AIModelStatus {
+    fn default() -> Self {
+        Self {
+            status: AIModelStatusKind::Untested,
+            message: None,
+            checked_at: None,
+            response_time_ms: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AIModelConfig {
+    pub id: String,
+    pub name: String,
+    pub protocol: AIProtocol,
+    pub base_url: String,
+    pub model_id: String,
+    pub endpoint_mode: AIEndpointMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_path: Option<String>,
+    pub auth_type: AIAuthType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_header: Option<String>,
+    pub timeout_secs: u64,
+    pub enabled: bool,
+    pub order: u32,
+    #[serde(default)]
+    pub has_api_key: bool,
+    #[serde(default)]
+    pub last_status: AIModelStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AIModelDraft {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub name: String,
+    pub protocol: AIProtocol,
+    pub base_url: String,
+    pub model_id: String,
+    pub endpoint_mode: AIEndpointMode,
+    #[serde(default)]
+    pub custom_path: Option<String>,
+    pub auth_type: AIAuthType,
+    #[serde(default)]
+    pub auth_header: Option<String>,
+    pub timeout_secs: u64,
+    pub enabled: bool,
+    #[serde(default, skip_serializing)]
+    pub api_key: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub clear_api_key: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AIServiceConfig {
+    pub schema_version: u32,
+    pub custom_instruction: String,
+    pub models: Vec<AIModelConfig>,
+}
+
+impl Default for AIServiceConfig {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            custom_instruction: String::new(),
+            models: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AboutInfo {
@@ -155,6 +278,10 @@ pub struct AISummary {
     pub key_points: Vec<String>,
     pub action_items: Vec<String>,
     pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_config_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
