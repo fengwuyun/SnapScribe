@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   buildExportName,
+  buildSummaryExportName,
+  buildSummaryText,
   formatClock,
   formatDateTime,
+  formatProjectCreatedAt,
   formatSize,
   fullText,
   isAcceptedFile,
+  splitHighlightParts,
+  truncateProjectName,
 } from "@/lib/format";
 
 describe("formatClock", () => {
@@ -48,6 +53,16 @@ describe("formatDateTime", () => {
   });
 });
 
+describe("formatProjectCreatedAt", () => {
+  it("formats persisted unix seconds as local date and time", () => {
+    expect(formatProjectCreatedAt("1787882400")).toMatch(/^2026-08-28 \d{2}:\d{2}$/);
+  });
+
+  it("returns a dash for malformed timestamps", () => {
+    expect(formatProjectCreatedAt("not-a-time")).toBe("—");
+  });
+});
+
 describe("buildExportName", () => {
   it("replaces the source extension", () => {
     expect(buildExportName("meeting.mp4", "txt")).toBe("meeting.txt");
@@ -56,6 +71,40 @@ describe("buildExportName", () => {
 
   it("falls back to a generic stem", () => {
     expect(buildExportName("", "srt")).toBe("transcript.srt");
+  });
+});
+
+describe("project presentation", () => {
+  it("shows the first ten Unicode characters followed by an ellipsis", () => {
+    expect(truncateProjectName("十个字项目名称刚好呀", 10)).toBe("十个字项目名称刚好呀");
+    expect(truncateProjectName("这是一个超过十个字的项目名称", 10)).toBe("这是一个超过十个字的…");
+    expect(truncateProjectName("🎙️录音项目名称很长很长", 10)).toBe("🎙️录音项目名称很长…");
+  });
+
+  it("splits every case-insensitive search match for theme highlighting", () => {
+    expect(splitHighlightParts("Meeting meeting 复盘", "MEETING")).toEqual([
+      { text: "Meeting", highlighted: true },
+      { text: " ", highlighted: false },
+      { text: "meeting", highlighted: true },
+      { text: " 复盘", highlighted: false },
+    ]);
+    expect(splitHighlightParts("会员分账讨论", "分账")).toEqual([
+      { text: "会员", highlighted: false },
+      { text: "分账", highlighted: true },
+      { text: "讨论", highlighted: false },
+    ]);
+  });
+
+  it("adds the AI summary suffix before the text extension", () => {
+    expect(buildSummaryExportName("产品评审会议.m4a")).toBe("产品评审会议-AI总结.txt");
+  });
+
+  it("builds copy and export text from all summary sections", () => {
+    expect(buildSummaryText({
+      summary: "本次确定上线计划。",
+      keyPoints: ["周五发布", "保留回滚方案"],
+      actionItems: ["完成验收"],
+    })).toBe("摘要\n本次确定上线计划。\n\n关键要点\n- 周五发布\n- 保留回滚方案\n\n待办事项\n- 完成验收");
   });
 });
 

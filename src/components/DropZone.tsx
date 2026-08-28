@@ -22,6 +22,7 @@ export function DropZone({
   const busyRef = useRef(false);
 
   useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
     let disposed = false;
     let unlisten: (() => void) | undefined;
     void getCurrentWebview()

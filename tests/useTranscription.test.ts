@@ -63,9 +63,25 @@ describe("transcriptionReducer", () => {
     expect(state.segments.map((s) => s.id)).toEqual(["a", "b"]);
   });
 
+  it("ignores segments for another project even when the job id matches", () => {
+    let state = transcriptionReducer(readyState(), {
+      type: "started",
+      projectId: "project-1",
+      jobId: "job-1",
+    });
+    state = transcriptionReducer(state, {
+      type: "segments",
+      projectId: "project-other",
+      jobId: "job-1",
+      segments: [segment("wrong-project")],
+    });
+    expect(state.segments).toEqual([]);
+  });
+
   it("tracks progress only for the active job", () => {
     let state = transcriptionReducer(readyState(), { type: "started", jobId: "job-1" });
     const event = {
+      projectId: "",
       jobId: "job-1",
       stage: "transcribing" as const,
       percent: 10,

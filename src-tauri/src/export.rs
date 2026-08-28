@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::model::TranscriptSegment;
+use crate::model::{AISummary, TranscriptSegment};
 
 /// Plain-text full transcript: one line per segment, UTF-8, no timestamps.
 pub fn build_txt(segments: &[TranscriptSegment]) -> String {
@@ -29,6 +29,27 @@ pub fn build_srt(segments: &[TranscriptSegment]) -> String {
     out
 }
 
+pub fn build_summary_txt(summary: &AISummary) -> String {
+    let key_points = summary
+        .key_points
+        .iter()
+        .map(|item| format!("- {}", item.trim()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let action_items = summary
+        .action_items
+        .iter()
+        .map(|item| format!("- {}", item.trim()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "摘要\n{}\n\n关键要点\n{}\n\n待办事项\n{}",
+        summary.summary.trim(),
+        key_points,
+        action_items,
+    )
+}
+
 /// Format seconds as `HH:MM:SS,mmm` (SRT timestamp style).
 pub fn srt_time(secs: f64) -> String {
     let total_ms = (secs * 1000.0).round() as u64;
@@ -52,7 +73,12 @@ mod tests {
     use super::*;
 
     fn seg(start: f64, end: f64, text: &str) -> TranscriptSegment {
-        TranscriptSegment { id: "x".into(), start, end, text: text.into() }
+        TranscriptSegment {
+            id: "x".into(),
+            start,
+            end,
+            text: text.into(),
+        }
     }
 
     #[test]
@@ -72,5 +98,23 @@ mod tests {
         assert_eq!(srt_time(0.0), "00:00:00,000");
         assert_eq!(srt_time(59.9994), "00:00:59,999");
         assert_eq!(srt_time(7225.0), "02:00:25,000");
+    }
+
+    #[test]
+    fn summary_txt_contains_all_three_sections() {
+        let summary = AISummary {
+            schema_version: 1,
+            project_id: "p1".into(),
+            source_transcript_revision: 1,
+            generated_at: "1".into(),
+            summary: "结论".into(),
+            key_points: vec!["要点一".into(), "要点二".into()],
+            action_items: vec!["跟进".into()],
+            model: "model".into(),
+        };
+        assert_eq!(
+            build_summary_txt(&summary),
+            "摘要\n结论\n\n关键要点\n- 要点一\n- 要点二\n\n待办事项\n- 跟进"
+        );
     }
 }

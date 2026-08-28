@@ -128,6 +128,7 @@ export default function Home() {
             <>
               <AudioPlayer
                 filePath={state.filePath}
+                fileName={state.file?.fileName ?? "音频文件"}
                 seekRequest={seekRequest}
                 onTimeUpdate={setPlaybackSec}
               />

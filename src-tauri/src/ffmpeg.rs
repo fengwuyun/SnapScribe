@@ -35,7 +35,11 @@ pub fn build_segment_args(input: &Path, seg_pattern: &Path) -> Vec<String> {
 
 /// Run the extract+split conversion and return the produced segment files in
 /// playback order.
-pub fn run_extract_split(ffmpeg: &Path, input: &Path, temp_dir: &Path) -> Result<Vec<PathBuf>, String> {
+pub fn run_extract_split(
+    ffmpeg: &Path,
+    input: &Path,
+    temp_dir: &Path,
+) -> Result<Vec<PathBuf>, String> {
     std::fs::create_dir_all(temp_dir).map_err(|e| format!("无法创建临时目录：{e}"))?;
     let pattern = temp_dir.join("seg_%04d.wav");
 
@@ -106,20 +110,15 @@ pub fn wav_duration_seconds(path: &Path) -> Result<f64, String> {
             file.read_exact(&mut fmt)
                 .map_err(|_| "WAVE fmt 块不完整".to_string())?;
             if fmt.len() >= 16 {
-                byte_rate = Some(u32::from_le_bytes([
-                    fmt[8], fmt[9], fmt[10], fmt[11],
-                ]));
+                byte_rate = Some(u32::from_le_bytes([fmt[8], fmt[9], fmt[10], fmt[11]]));
             }
         } else if id == b"data" {
             let rate = byte_rate.filter(|r| *r > 0).ok_or("WAV 缺少有效 fmt 块")?;
             return Ok(size as f64 / rate as f64);
         } else {
             let skip = size + (size & 1); // chunks are word-aligned
-            std::io::copy(
-                &mut file.by_ref().take(skip as u64),
-                &mut std::io::sink(),
-            )
-            .map_err(|_| "WAV 块读取失败".to_string())?;
+            std::io::copy(&mut file.by_ref().take(skip as u64), &mut std::io::sink())
+                .map_err(|_| "WAV 块读取失败".to_string())?;
         }
     }
     Err("WAV 缺少 data 块".to_string())
@@ -157,7 +156,10 @@ mod tests {
 
     #[test]
     fn segment_args_use_pcm_and_fixed_window() {
-        let args = build_segment_args(Path::new("C:/in/meeting.mp4"), Path::new("T/t/seg_%04d.wav"));
+        let args = build_segment_args(
+            Path::new("C:/in/meeting.mp4"),
+            Path::new("T/t/seg_%04d.wav"),
+        );
         let joined = args.join(" ");
         assert!(joined.contains("-ac 1"));
         assert!(joined.contains("-ar 16000"));

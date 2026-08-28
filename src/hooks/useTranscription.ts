@@ -20,6 +20,7 @@ export interface TranscriptionState {
   phase: AppPhase;
   file: MediaInfo | null;
   filePath: string | null;
+  projectId: string | null;
   jobId: string | null;
   /** Segments received so far — appended incrementally as the backend emits them. */
   segments: TranscriptSegment[];
@@ -31,9 +32,9 @@ export interface TranscriptionState {
 export type TranscriptionAction =
   | { type: "fileSelected"; path: string; info: MediaInfo }
   | { type: "fileCleared" }
-  | { type: "started"; jobId: string }
+  | { type: "started"; projectId?: string; jobId: string }
   | { type: "progress"; jobId: string; event: ProgressEvent }
-  | { type: "segments"; jobId: string; segments: TranscriptSegment[] }
+  | { type: "segments"; projectId?: string; jobId: string; segments: TranscriptSegment[] }
   | { type: "completed"; result: TranscriptResult }
   | { type: "failed"; message: string }
   | { type: "canceled" };
@@ -42,6 +43,7 @@ export const initialTranscriptionState: TranscriptionState = {
   phase: "empty",
   file: null,
   filePath: null,
+  projectId: null,
   jobId: null,
   segments: [],
   progress: null,
@@ -50,8 +52,8 @@ export const initialTranscriptionState: TranscriptionState = {
 };
 
 /** Events from a superseded job are dropped instead of corrupting the current one. */
-function isStale(state: TranscriptionState, jobId: string): boolean {
-  return state.jobId !== jobId;
+function isStale(state: TranscriptionState, jobId: string, projectId?: string): boolean {
+  return state.jobId !== jobId || (state.projectId !== null && state.projectId !== projectId);
 }
 
 export function transcriptionReducer(
@@ -72,6 +74,7 @@ export function transcriptionReducer(
       return {
         ...state,
         phase: "transcribing",
+        projectId: action.projectId ?? null,
         jobId: action.jobId,
         // Cancel keeps the selected file; a fresh start always begins empty.
         segments: [],
@@ -83,7 +86,7 @@ export function transcriptionReducer(
       if (state.phase !== "transcribing" || isStale(state, action.jobId)) return state;
       return { ...state, progress: action.event };
     case "segments":
-      if (state.phase !== "transcribing" || isStale(state, action.jobId)) return state;
+      if (state.phase !== "transcribing" || isStale(state, action.jobId, action.projectId)) return state;
       return {
         ...state,
         segments: [...state.segments, ...action.segments],
@@ -137,7 +140,12 @@ export function useTranscription() {
           dispatch({ type: "progress", jobId: e.payload.jobId, event: e.payload }),
         ),
         listenSegments((e) =>
-          dispatch({ type: "segments", jobId: e.payload.jobId, segments: e.payload.segments }),
+          dispatch({
+            type: "segments",
+            projectId: e.payload.projectId || undefined,
+            jobId: e.payload.jobId,
+            segments: e.payload.segments,
+          }),
         ),
         listenCompleted<TranscriptResult>((e) => dispatch({ type: "completed", result: e.payload.result })),
         listenFailed((e) => dispatch({ type: "failed", message: e.payload.message })),

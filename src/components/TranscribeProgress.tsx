@@ -32,6 +32,8 @@ export function TranscribeProgress({
   const litCount = Math.round((percent / 100) * BAR_COUNT);
   const stageLabel = !progress
     ? "正在准备…"
+    : progress.stage === "paused"
+      ? "转录已暂停"
     : progress.stage === "transcribing"
       ? `正在转写 ${fileName}`
       : progress.stage === "splitting"
@@ -66,7 +68,7 @@ export function TranscribeProgress({
 
       <p className="mt-3 font-mono text-xs text-text-tertiary">
         {progress
-          ? progress.stage === "transcribing"
+          ? progress.stage === "transcribing" || progress.stage === "paused"
             ? `已处理 ${formatClock(progress.processedSeconds)} / ${formatClock(progress.totalSeconds)} · 第 ${progress.segmentIndex} / ${progress.segmentCount} 段`
             : `总时长 ${formatClock(progress.totalSeconds)}`
           : ""}

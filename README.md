@@ -21,6 +21,7 @@
 npm install            # 安装前端依赖
 node scripts/download-models.mjs      # 下载 ASR 模型到 src-tauri/resources/models/（约 256MB）
 node scripts/download-ffmpeg.mjs      # 下载 ffmpeg/ffprobe 到 src-tauri/resources/bin/
+node scripts/download-asr-runtime.mjs # 下载并校验官方 SenseVoice Windows x64 运行时
 npm run tauri dev      # 启动开发实例
 ```
 

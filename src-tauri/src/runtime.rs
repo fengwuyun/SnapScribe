@@ -26,9 +26,7 @@ impl RuntimePaths {
 
         let ffmpeg = find_file(&bases, "ffmpeg.exe")
             .or_else(find_on_path("ffmpeg.exe"))
-            .ok_or_else(|| {
-                format!("未找到 ffmpeg。已尝试：{}", display_dirs(&bases))
-            })?;
+            .ok_or_else(|| format!("未找到 ffmpeg。已尝试：{}", display_dirs(&bases)))?;
         let ffprobe_dir = ffmpeg.parent().map(|p| p.to_path_buf()).unwrap_or_default();
         let ffprobe = ffprobe_dir.join("ffprobe.exe");
         if !ffprobe.is_file() {
@@ -36,7 +34,10 @@ impl RuntimePaths {
         }
 
         let asr_exe = find_file(&bases, "llama-funasr-sensevoice.exe").ok_or_else(|| {
-            format!("未找到识别程序 llama-funasr-sensevoice.exe。已尝试：{}", display_dirs(&bases))
+            format!(
+                "未找到识别程序 llama-funasr-sensevoice.exe。已尝试：{}",
+                display_dirs(&bases)
+            )
         })?;
 
         // Models live in a `models` sibling of the binaries; also accept them
@@ -45,10 +46,18 @@ impl RuntimePaths {
             .iter()
             .flat_map(|b| [b.join("models"), b.clone()])
             .collect::<Vec<_>>();
-        let asr_model = find_file(&model_dirs, "sensevoice-small-q8.gguf")
-            .ok_or_else(|| format!("未找到模型 sensevoice-small-q8.gguf。已尝试：{}", display_dirs(&model_dirs)))?;
-        let vad_model = find_file(&model_dirs, "fsmn-vad.gguf")
-            .ok_or_else(|| format!("未找到模型 fsmn-vad.gguf。已尝试：{}", display_dirs(&model_dirs)))?;
+        let asr_model = find_file(&model_dirs, "sensevoice-small-q8.gguf").ok_or_else(|| {
+            format!(
+                "未找到模型 sensevoice-small-q8.gguf。已尝试：{}",
+                display_dirs(&model_dirs)
+            )
+        })?;
+        let vad_model = find_file(&model_dirs, "fsmn-vad.gguf").ok_or_else(|| {
+            format!(
+                "未找到模型 fsmn-vad.gguf。已尝试：{}",
+                display_dirs(&model_dirs)
+            )
+        })?;
 
         Ok(Self {
             ffmpeg,
@@ -125,7 +134,11 @@ mod tests {
     #[test]
     fn resolves_full_runtime_in_dev_checkout() {
         let runtime = RuntimePaths::resolve(None).expect("resolve should succeed");
-        assert!(runtime.ffmpeg.is_file(), "ffmpeg at {}", runtime.ffmpeg.display());
+        assert!(
+            runtime.ffmpeg.is_file(),
+            "ffmpeg at {}",
+            runtime.ffmpeg.display()
+        );
         assert!(runtime.ffprobe.is_file());
         assert!(runtime.asr_exe.is_file());
         assert!(runtime.asr_model.is_file());
@@ -145,19 +158,13 @@ mod tests {
     /// asserts every runtime is found inside that directory tree.
     #[test]
     fn resolves_installed_layout_under_resources() {
-        let fake = std::env::temp_dir().join(format!(
-            "snapscribe-install-test-{}",
-            std::process::id()
-        ));
+        let fake =
+            std::env::temp_dir().join(format!("snapscribe-install-test-{}", std::process::id()));
         let bin = fake.join("resources").join("bin");
         let models = fake.join("resources").join("models");
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::create_dir_all(&models).unwrap();
-        for name in [
-            "ffmpeg.exe",
-            "ffprobe.exe",
-            "llama-funasr-sensevoice.exe",
-        ] {
+        for name in ["ffmpeg.exe", "ffprobe.exe", "llama-funasr-sensevoice.exe"] {
             std::fs::write(bin.join(name), b"x").unwrap();
         }
         for name in ["sensevoice-small-q8.gguf", "fsmn-vad.gguf"] {

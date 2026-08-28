@@ -1,21 +1,42 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::export;
 use crate::history;
 use crate::media;
+use crate::model::{
+    AISummary, AboutInfo, AppSettings, ConnectionResult, ProjectDetail, ProjectListItem,
+    ProjectSort, StartProjectResult, TranscriptionJobStatus,
+};
+use crate::model::{
+    CanceledEvent, CompletedEvent, FailedEvent, RecordingLevelEvent, RecordingStartResult,
+};
 use crate::model::{HistoryEntry, MediaInfo, TranscriptSegment};
 use crate::pipeline::{self, ActiveJob};
+use crate::project_store::ProjectStore;
+use crate::recording::RecordingSession;
 use crate::runtime::RuntimePaths;
+use crate::secret::SecretStore;
+use crate::settings::SettingsStore;
 
 /// Global single-job registry. The UI only exposes one transcription at a time.
 #[derive(Default)]
 pub struct AppState {
     pub job: Mutex<Option<ActiveJob>>,
+    pub recording: Mutex<Option<ActiveRecording>>,
+}
+
+pub struct ActiveRecording {
+    pub project_id: String,
+    pub session: RecordingSession,
+    pub job: ActiveJob,
+    pub worker: JoinHandle<Result<pipeline::LiveOutcome, String>>,
+    pub chunk_dir: PathBuf,
 }
 
 #[tauri::command]
@@ -26,6 +47,15 @@ pub fn select_file(app: AppHandle) -> Result<Option<String>, String> {
         .add_filter("视频 / 音频", &["mp4", "mov", "mkv", "mp3", "m4a", "wav"])
         .blocking_pick_file();
     Ok(picked.map(|f| f.to_string()))
+}
+
+#[tauri::command]
+pub fn select_directory(app: AppHandle) -> Result<Option<String>, String> {
+    Ok(app
+        .dialog()
+        .file()
+        .blocking_pick_folder()
+        .map(|folder| folder.to_string()))
 }
 
 #[tauri::command]
@@ -56,13 +86,464 @@ pub fn start_transcription(
 
     let job = ActiveJob {
         id: uuid::Uuid::new_v4().to_string(),
+        project_id: String::new(),
         cancel: Arc::new(AtomicBool::new(false)),
+        paused: Arc::new(AtomicBool::new(false)),
         running: Arc::new(AtomicBool::new(true)),
         current_child: Arc::new(Mutex::new(None)),
     };
-    pipeline::spawn_job(app, job.clone(), runtime, input);
+    pipeline::spawn_job(app, job.clone(), runtime, input, None);
     *current = Some(job);
     Ok(current.as_ref().expect("just stored").id.clone())
+}
+
+#[tauri::command]
+pub fn project_create_from_media(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<StartProjectResult, String> {
+    let runtime = resolve_runtime(&app)?;
+    let input = checked_input(&path)?;
+    let info = media::probe(&runtime.ffprobe, &input)?;
+
+    let mut current = state.job.lock().expect("job registry poisoned");
+    if current
+        .as_ref()
+        .is_some_and(|job| job.running.load(Ordering::SeqCst))
+    {
+        return Err("已有转写任务正在进行，请等待完成或先取消".to_string());
+    }
+
+    let settings = settings_store(&app)?.load()?;
+    let store = ProjectStore::new(PathBuf::from(&settings.data_root));
+    let project = store.create_imported_project(&input, &info, settings.import_strategy)?;
+    let transcription_input = project
+        .media
+        .path
+        .as_deref()
+        .map(PathBuf::from)
+        .ok_or("项目媒体路径为空")?;
+    let job = ActiveJob {
+        id: uuid::Uuid::new_v4().to_string(),
+        project_id: project.id.clone(),
+        cancel: Arc::new(AtomicBool::new(false)),
+        paused: Arc::new(AtomicBool::new(false)),
+        running: Arc::new(AtomicBool::new(true)),
+        current_child: Arc::new(Mutex::new(None)),
+    };
+    pipeline::spawn_job(app, job.clone(), runtime, transcription_input, Some(store));
+    let result = StartProjectResult {
+        project_id: project.id,
+        job_id: job.id.clone(),
+    };
+    *current = Some(job);
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn project_list(
+    app: AppHandle,
+    query: Option<String>,
+    sort: ProjectSort,
+) -> Result<Vec<ProjectListItem>, String> {
+    project_store(&app)?.list_projects(query.as_deref().unwrap_or_default(), sort)
+}
+
+#[tauri::command]
+pub fn project_get(app: AppHandle, project_id: String) -> Result<ProjectDetail, String> {
+    project_store(&app)?.read_detail(&project_id)
+}
+
+#[tauri::command]
+pub fn project_delete(app: AppHandle, project_id: String) -> Result<(), String> {
+    project_store(&app)?.delete_project(&project_id)
+}
+
+#[tauri::command]
+pub fn project_rename(
+    app: AppHandle,
+    project_id: String,
+    name: String,
+) -> Result<crate::model::TranscriptionProject, String> {
+    project_store(&app)?.rename_project(&project_id, &name)
+}
+
+#[tauri::command]
+pub fn project_save_transcript(
+    app: AppHandle,
+    project_id: String,
+    segments: Vec<TranscriptSegment>,
+) -> Result<crate::model::TranscriptDocument, String> {
+    project_store(&app)?.save_transcript_segments(&project_id, segments)
+}
+
+#[tauri::command]
+pub fn project_relink_media(
+    app: AppHandle,
+    project_id: String,
+    path: String,
+) -> Result<crate::model::TranscriptionProject, String> {
+    let input = checked_input(&path)?;
+    let runtime = resolve_runtime(&app)?;
+    let info = media::probe(&runtime.ffprobe, &input)?;
+    project_store(&app)?.relink_media(&project_id, &input, &info)
+}
+
+#[tauri::command]
+pub fn project_delete_managed_media(
+    app: AppHandle,
+    project_id: String,
+) -> Result<crate::model::TranscriptionProject, String> {
+    project_store(&app)?.delete_managed_media(&project_id)
+}
+
+#[tauri::command]
+pub fn project_open_media_location(app: AppHandle, project_id: String) -> Result<(), String> {
+    let detail = project_store(&app)?.read_detail(&project_id)?;
+    let path = detail.project.media.path.ok_or("原始媒体不可用")?;
+    let path = checked_input(&path)?;
+    let mut command = std::process::Command::new("explorer.exe");
+    crate::proc::hide_console(&mut command);
+    command
+        .arg(format!("/select,{}", path.display()))
+        .spawn()
+        .map_err(|e| format!("无法打开原文件位置：{e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn project_export(
+    app: AppHandle,
+    project_id: String,
+    format: String,
+    path: String,
+) -> Result<(), String> {
+    let detail = project_store(&app)?.read_detail(&project_id)?;
+    let content = match format.as_str() {
+        "txt" => export::build_txt(&detail.transcript.segments),
+        "srt" => export::build_srt(&detail.transcript.segments),
+        "summary" => detail
+            .summary
+            .as_ref()
+            .map(export::build_summary_txt)
+            .ok_or("当前项目尚未生成 AI 总结")?,
+        _ => return Err("仅支持转录文本、SRT 或 AI 总结导出".to_string()),
+    };
+    export::write_utf8(Path::new(&path), &content)
+}
+
+#[tauri::command]
+pub fn recording_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<RecordingStartResult, String> {
+    if state
+        .job
+        .lock()
+        .expect("job registry poisoned")
+        .as_ref()
+        .is_some_and(|job| job.running.load(Ordering::SeqCst))
+    {
+        return Err("已有转写任务正在进行".to_string());
+    }
+    let mut active = state.recording.lock().expect("recording registry poisoned");
+    if active.is_some() {
+        return Err("录音已经开始".to_string());
+    }
+    let runtime = resolve_runtime(&app)?;
+    let store = project_store(&app)?;
+    let project = store.create_recording_project()?;
+    let path = project
+        .media
+        .path
+        .as_deref()
+        .map(PathBuf::from)
+        .ok_or("录音文件路径为空")?;
+    let chunk_dir = store.project_dir(&project.id).join("live-chunks");
+    let started = match crate::recording::start(path, chunk_dir.clone()) {
+        Ok(started) => started,
+        Err(error) => {
+            let _ = store.delete_project(&project.id);
+            return Err(error);
+        }
+    };
+    let job = ActiveJob {
+        id: uuid::Uuid::new_v4().to_string(),
+        project_id: project.id.clone(),
+        cancel: Arc::new(AtomicBool::new(false)),
+        paused: Arc::new(AtomicBool::new(false)),
+        running: Arc::new(AtomicBool::new(true)),
+        current_child: Arc::new(Mutex::new(None)),
+    };
+    let level_app = app.clone();
+    let level_recording_id = started.session.id.clone();
+    let level_project_id = project.id.clone();
+    std::thread::spawn(move || {
+        let mut last_emit = std::time::Instant::now() - std::time::Duration::from_millis(100);
+        for level in started.levels {
+            if last_emit.elapsed() < std::time::Duration::from_millis(80) {
+                continue;
+            }
+            last_emit = std::time::Instant::now();
+            let _ = level_app.emit(
+                "recording://level",
+                RecordingLevelEvent {
+                    recording_id: level_recording_id.clone(),
+                    project_id: level_project_id.clone(),
+                    level,
+                },
+            );
+        }
+    });
+    let worker_app = app.clone();
+    let worker_job = job.clone();
+    let worker_store = store.clone();
+    let chunks = started.chunks;
+    let worker = std::thread::spawn(move || {
+        pipeline::run_live_chunks(&worker_app, &worker_job, &runtime, chunks, &worker_store)
+    });
+    let result = RecordingStartResult {
+        recording_id: started.session.id.clone(),
+        project_id: project.id.clone(),
+        job_id: job.id.clone(),
+    };
+    *active = Some(ActiveRecording {
+        project_id: project.id,
+        session: started.session,
+        job: job.clone(),
+        worker,
+        chunk_dir,
+    });
+    *state.job.lock().expect("job registry poisoned") = Some(job);
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn recording_set_paused(
+    state: State<'_, AppState>,
+    recording_id: String,
+    paused: bool,
+) -> Result<(), String> {
+    let active = state.recording.lock().expect("recording registry poisoned");
+    let active = active
+        .as_ref()
+        .filter(|active| active.session.id == recording_id)
+        .ok_or("录音任务不存在")?;
+    if paused {
+        active.session.pause()
+    } else {
+        active.session.resume()
+    }
+}
+
+#[tauri::command]
+pub fn recording_stop(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    recording_id: String,
+) -> Result<StartProjectResult, String> {
+    let active = state
+        .recording
+        .lock()
+        .expect("recording registry poisoned")
+        .take()
+        .ok_or("没有正在进行的录音")?;
+    if active.session.id != recording_id {
+        *state.recording.lock().expect("recording registry poisoned") = Some(active);
+        return Err("录音任务不匹配".to_string());
+    }
+    let path = active.session.stop()?;
+    let runtime = resolve_runtime(&app)?;
+    let info = media::probe(&runtime.ffprobe, &path)?;
+    let store = project_store(&app)?;
+    let project = store.finalize_recording(&active.project_id, &info)?;
+    let job = active.job.clone();
+    let worker = active.worker;
+    let chunk_dir = active.chunk_dir;
+    let finish_app = app.clone();
+    let finish_store = store.clone();
+    let finish_job = job.clone();
+    std::thread::spawn(move || {
+        let outcome = worker
+            .join()
+            .map_err(|_| "实时转录线程异常退出".to_string())
+            .and_then(|value| value);
+        let _ = std::fs::remove_dir_all(chunk_dir);
+        match outcome {
+            Ok(pipeline::LiveOutcome::Completed(result)) => {
+                if let Err(message) =
+                    finish_store.complete_transcription(&finish_job.project_id, &result.segments)
+                {
+                    let _ = finish_app.emit(
+                        "transcript://failed",
+                        FailedEvent {
+                            project_id: finish_job.project_id.clone(),
+                            job_id: finish_job.id.clone(),
+                            message,
+                        },
+                    );
+                } else {
+                    let _ = finish_app.emit(
+                        "transcript://completed",
+                        CompletedEvent {
+                            project_id: finish_job.project_id.clone(),
+                            job_id: finish_job.id.clone(),
+                            result,
+                        },
+                    );
+                }
+            }
+            Ok(pipeline::LiveOutcome::Canceled) => {
+                let _ = finish_store.cancel_transcription(&finish_job.project_id);
+                let _ = finish_app.emit(
+                    "transcript://canceled",
+                    CanceledEvent {
+                        project_id: finish_job.project_id.clone(),
+                        job_id: finish_job.id.clone(),
+                    },
+                );
+            }
+            Err(message) => {
+                let _ = finish_app.emit(
+                    "transcript://failed",
+                    FailedEvent {
+                        project_id: finish_job.project_id.clone(),
+                        job_id: finish_job.id.clone(),
+                        message,
+                    },
+                );
+            }
+        }
+        finish_job.running.store(false, Ordering::SeqCst);
+    });
+    Ok(StartProjectResult {
+        project_id: project.id,
+        job_id: job.id,
+    })
+}
+
+#[tauri::command]
+pub fn recording_cancel(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    recording_id: String,
+) -> Result<(), String> {
+    let active = state
+        .recording
+        .lock()
+        .expect("recording registry poisoned")
+        .take()
+        .ok_or("没有正在进行的录音")?;
+    if active.session.id != recording_id {
+        *state.recording.lock().expect("recording registry poisoned") = Some(active);
+        return Err("录音任务不匹配".to_string());
+    }
+    active.job.cancel.store(true, Ordering::SeqCst);
+    if let Some(child) = active
+        .job
+        .current_child
+        .lock()
+        .expect("child slot poisoned")
+        .as_mut()
+    {
+        let _ = child.kill();
+    }
+    let _ = active.session.stop();
+    let _ = active.worker.join();
+    active.job.running.store(false, Ordering::SeqCst);
+    let _ = std::fs::remove_dir_all(active.chunk_dir);
+    project_store(&app)?.delete_project(&active.project_id)
+}
+
+#[tauri::command]
+pub fn settings_get(app: AppHandle) -> Result<AppSettings, String> {
+    let mut settings = settings_store(&app)?.load()?;
+    settings.ai.has_api_key = secret_store(&app)?.has_key();
+    settings.api_key = None;
+    settings.clear_api_key = false;
+    Ok(settings)
+}
+
+#[tauri::command]
+pub fn about_get() -> AboutInfo {
+    AboutInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        build_time: "2026-08-28".to_string(),
+        repository_url: "https://github.com/fengwuyun/SnapScribe".to_string(),
+    }
+}
+
+#[tauri::command]
+pub fn open_repository() -> Result<(), String> {
+    let mut command = std::process::Command::new("explorer.exe");
+    crate::proc::hide_console(&mut command);
+    command
+        .arg("https://github.com/fengwuyun/SnapScribe")
+        .spawn()
+        .map_err(|e| format!("无法打开 GitHub 仓库：{e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn settings_save(app: AppHandle, mut settings: AppSettings) -> Result<AppSettings, String> {
+    let store = settings_store(&app)?;
+    let current = store.load()?;
+    let next_root = settings.data_root.trim();
+    if next_root.is_empty() {
+        return Err("转录数据保存位置不能为空".to_string());
+    }
+    store.migrate_data_root(&current.data_root, next_root)?;
+    let secrets = secret_store(&app)?;
+    if settings.clear_api_key {
+        secrets.clear()?;
+    } else if let Some(key) = settings
+        .api_key
+        .as_deref()
+        .filter(|key| !key.trim().is_empty())
+    {
+        secrets.save(key)?;
+    }
+    settings.data_root = next_root.to_string();
+    settings.ai.has_api_key = secrets.has_key();
+    settings.api_key = None;
+    settings.clear_api_key = false;
+    store.save(&settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+pub fn ai_test_connection(
+    app: AppHandle,
+    settings: AppSettings,
+) -> Result<ConnectionResult, String> {
+    let key = resolve_api_key(&app, settings.api_key.as_deref())?;
+    crate::ai::test_connection(&settings.ai, &key)
+}
+
+#[tauri::command]
+pub fn ai_generate_summary(app: AppHandle, project_id: String) -> Result<AISummary, String> {
+    let settings = settings_get(app.clone())?;
+    let key = resolve_api_key(&app, None)?;
+    let store = project_store(&app)?;
+    let detail = store.read_detail(&project_id)?;
+    let transcript = detail
+        .transcript
+        .segments
+        .iter()
+        .map(|segment| segment.text.trim())
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let summary = crate::ai::generate_summary(
+        &settings.ai,
+        &key,
+        &project_id,
+        detail.transcript.revision,
+        &transcript,
+    )?;
+    store.save_summary(&project_id, &summary)?;
+    Ok(summary)
 }
 
 /// Cancel a job by id: signal the loop and kill any in-flight ASR child.
@@ -72,7 +553,12 @@ pub fn cancel_transcription(state: State<'_, AppState>, job_id: String) -> Resul
     match current.as_ref() {
         Some(job) if job.id == job_id => {
             job.cancel.store(true, Ordering::SeqCst);
-            if let Some(child) = job.current_child.lock().expect("child slot poisoned").as_mut() {
+            if let Some(child) = job
+                .current_child
+                .lock()
+                .expect("child slot poisoned")
+                .as_mut()
+            {
                 // Killing is best-effort; the loop reaps whatever happens next.
                 let _ = child.kill();
             }
@@ -82,6 +568,66 @@ pub fn cancel_transcription(state: State<'_, AppState>, job_id: String) -> Resul
     }
 }
 
+#[tauri::command]
+pub fn transcription_job_status(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Option<TranscriptionJobStatus> {
+    let current = state.job.lock().expect("job registry poisoned");
+    current
+        .as_ref()
+        .filter(|job| job.project_id == project_id)
+        .map(|job| TranscriptionJobStatus {
+            project_id: job.project_id.clone(),
+            job_id: job.id.clone(),
+            running: job.running.load(Ordering::SeqCst),
+            paused: job.paused.load(Ordering::SeqCst),
+        })
+}
+
+#[tauri::command]
+pub fn set_transcription_paused(
+    state: State<'_, AppState>,
+    project_id: String,
+    paused: bool,
+) -> Result<TranscriptionJobStatus, String> {
+    let current = state.job.lock().expect("job registry poisoned");
+    let job = current
+        .as_ref()
+        .filter(|job| job.project_id == project_id && job.running.load(Ordering::SeqCst))
+        .ok_or("转录任务不存在或已结束")?;
+    job.paused.store(paused, Ordering::SeqCst);
+    Ok(TranscriptionJobStatus {
+        project_id: job.project_id.clone(),
+        job_id: job.id.clone(),
+        running: true,
+        paused,
+    })
+}
+
+#[tauri::command]
+pub fn cancel_project_transcription(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<(), String> {
+    let current = state.job.lock().expect("job registry poisoned");
+    let job = current
+        .as_ref()
+        .filter(|job| job.project_id == project_id && job.running.load(Ordering::SeqCst))
+        .ok_or("转录任务不存在或已结束")?;
+    job.cancel.store(true, Ordering::SeqCst);
+    job.paused.store(false, Ordering::SeqCst);
+    if let Some(child) = job
+        .current_child
+        .lock()
+        .expect("child slot poisoned")
+        .as_mut()
+    {
+        let _ = child.kill();
+    }
+    Ok(())
+}
+
 /// Native save dialog; returns the chosen absolute path (None = canceled).
 #[tauri::command]
 pub fn save_file_dialog(
@@ -89,7 +635,11 @@ pub fn save_file_dialog(
     default_name: String,
     ext: String,
 ) -> Result<Option<String>, String> {
-    let filter_name = if ext.eq_ignore_ascii_case("txt") { "文本文件" } else { "SRT 字幕" };
+    let filter_name = if ext.eq_ignore_ascii_case("txt") {
+        "文本文件"
+    } else {
+        "SRT 字幕"
+    };
     let file = app
         .dialog()
         .file()
@@ -122,7 +672,11 @@ pub fn history_read(app: AppHandle, file_name: String) -> Result<String, String>
 }
 
 #[tauri::command]
-pub fn history_rename(app: AppHandle, old_name: String, new_name: String) -> Result<String, String> {
+pub fn history_rename(
+    app: AppHandle,
+    old_name: String,
+    new_name: String,
+) -> Result<String, String> {
     history::rename(&pipeline::history_dir(&app), &old_name, &new_name)
 }
 
@@ -152,4 +706,30 @@ fn resolve_runtime(app: &AppHandle) -> Result<RuntimePaths, String> {
 
 fn parse_segments(json: &str) -> Result<Vec<TranscriptSegment>, String> {
     serde_json::from_str(json).map_err(|e| format!("段落解析失败：{e}"))
+}
+
+fn settings_store(app: &AppHandle) -> Result<SettingsStore, String> {
+    Ok(SettingsStore::new(config_dir(app)?))
+}
+
+fn project_store(app: &AppHandle) -> Result<ProjectStore, String> {
+    let settings = settings_store(app)?.load()?;
+    Ok(ProjectStore::new(PathBuf::from(settings.data_root)))
+}
+
+fn secret_store(app: &AppHandle) -> Result<SecretStore, String> {
+    Ok(SecretStore::new(&config_dir(app)?))
+}
+
+fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map_err(|e| format!("无法确定设置目录：{e}"))
+}
+
+fn resolve_api_key(app: &AppHandle, draft: Option<&str>) -> Result<String, String> {
+    match draft.map(str::trim).filter(|key| !key.is_empty()) {
+        Some(key) => Ok(key.to_string()),
+        None => secret_store(app)?.load(),
+    }
 }

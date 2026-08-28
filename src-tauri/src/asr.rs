@@ -23,7 +23,6 @@ pub fn build_args(asr_exe_model: &Path, vad_model: &Path, audio: &Path) -> Vec<S
         audio.to_string_lossy().as_ref(),
         "--backend",
         "cpu",
-        "--srt",
     ]
     .into_iter()
     .map(str::to_string)
@@ -32,7 +31,12 @@ pub fn build_args(asr_exe_model: &Path, vad_model: &Path, audio: &Path) -> Vec<S
 
 /// Spawn the ASR process for one segment. The caller owns the child so that
 /// cancellation can kill it mid-run.
-pub fn spawn(asr_exe: &Path, asr_model: &Path, vad_model: &Path, audio: &Path) -> Result<Child, String> {
+pub fn spawn(
+    asr_exe: &Path,
+    asr_model: &Path,
+    vad_model: &Path,
+    audio: &Path,
+) -> Result<Child, String> {
     let mut cmd = Command::new(asr_exe);
     crate::proc::hide_console(&mut cmd);
     cmd.args(build_args(asr_model, vad_model, audio))
@@ -49,6 +53,33 @@ pub fn parse_srt(srt: &str) -> Vec<SrtCue> {
         .split("\n\n")
         .filter_map(parse_block)
         .collect()
+}
+
+/// Accept timestamped SRT from older/custom runtimes and plain text from the
+/// official portable runtime. Plain text is assigned to the current FFmpeg
+/// window so timestamps remain seekable at segment granularity.
+pub fn parse_transcript_output(output: &str, duration: f64) -> Vec<SrtCue> {
+    let cues = parse_srt(output);
+    if !cues.is_empty() {
+        return cues;
+    }
+    let text = strip_special_tags(
+        &output
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join(" "),
+    );
+    if text.is_empty() {
+        Vec::new()
+    } else {
+        vec![SrtCue {
+            start: 0.0,
+            end: duration.max(0.0),
+            text,
+        }]
+    }
 }
 
 fn parse_block(block: &str) -> Option<SrtCue> {
@@ -143,25 +174,53 @@ pub struct AsrOutput {
     pub stderr: String,
 }
 
-pub fn collect_output(mut child: Child) -> Result<AsrOutput, String> {
+pub fn collect_output_shared(
+    slot: &std::sync::Arc<std::sync::Mutex<Option<Child>>>,
+) -> Result<AsrOutput, String> {
     use std::io::Read;
-    let mut stdout_pipe = child.stdout.take().ok_or("缺少 stdout 管道")?;
-    let mut stderr_pipe = child.stderr.take().ok_or("缺少 stderr 管道")?;
-    let t = std::thread::spawn(move || {
-        let mut buf = String::new();
-        let _ = stderr_pipe.read_to_string(&mut buf);
-        buf
+    let (mut stdout_pipe, mut stderr_pipe) = {
+        let mut guard = slot.lock().expect("child slot poisoned");
+        let child = guard.as_mut().ok_or("识别进程句柄丢失")?;
+        (
+            child.stdout.take().ok_or("缺少 stdout 管道")?,
+            child.stderr.take().ok_or("缺少 stderr 管道")?,
+        )
+    };
+    let stdout_reader = std::thread::spawn(move || {
+        let mut output = String::new();
+        let _ = stdout_pipe.read_to_string(&mut output);
+        output
     });
-    let mut out = String::new();
-    stdout_pipe
-        .read_to_string(&mut out)
-        .map_err(|e| format!("读取识别输出失败：{e}"))?;
-    let err = t.join().map_err(|_| "stderr 读取线程崩溃".to_string())?;
-    let status = child.wait().map_err(|e| format!("等待识别进程失败：{e}"))?;
+    let stderr_reader = std::thread::spawn(move || {
+        let mut output = String::new();
+        let _ = stderr_pipe.read_to_string(&mut output);
+        output
+    });
+    let status = loop {
+        let status = {
+            let mut guard = slot.lock().expect("child slot poisoned");
+            guard
+                .as_mut()
+                .ok_or("识别进程句柄丢失")?
+                .try_wait()
+                .map_err(|e| format!("等待识别进程失败：{e}"))?
+        };
+        if let Some(status) = status {
+            break status;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    slot.lock().expect("child slot poisoned").take();
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| "stdout 读取线程崩溃".to_string())?;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| "stderr 读取线程崩溃".to_string())?;
     Ok(AsrOutput {
         success: status.success(),
-        stdout: out,
-        stderr: err,
+        stdout,
+        stderr,
     })
 }
 
@@ -169,16 +228,42 @@ pub fn collect_output(mut child: Child) -> Result<AsrOutput, String> {
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
+    #[test]
+    fn shared_child_remains_killable_while_output_is_collected() {
+        let mut command = Command::new("ping.exe");
+        let child = command
+            .args(["127.0.0.1", "-n", "8"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(child)));
+        let collector_slot = slot.clone();
+        let started = std::time::Instant::now();
+        let collector = std::thread::spawn(move || collect_output_shared(&collector_slot));
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        slot.lock().unwrap().as_mut().unwrap().kill().unwrap();
+        let output = collector.join().unwrap().unwrap();
+
+        assert!(!output.success);
+        assert!(started.elapsed() < std::time::Duration::from_secs(3));
+    }
+
     #[test]
     fn parses_standard_srt_blocks() {
         let srt = "1\r\n00:00:00,000 --> 00:00:05,320\r\n今天我们讨论一下这个项目。\r\n\r\n2\r\n00:00:05,320 --> 00:00:12,100\r\n首先看一下当前的开发进度。\r\n";
         let cues = parse_srt(srt);
         assert_eq!(cues.len(), 2);
-        assert_eq!(cues[0], SrtCue {
-            start: 0.0,
-            end: 5.32,
-            text: "今天我们讨论一下这个项目。".into(),
-        });
+        assert_eq!(
+            cues[0],
+            SrtCue {
+                start: 0.0,
+                end: 5.32,
+                text: "今天我们讨论一下这个项目。".into(),
+            }
+        );
         assert!((cues[1].end - 12.1).abs() < 1e-9);
     }
 
@@ -194,8 +279,16 @@ mod tests {
     #[test]
     fn offsets_cues_into_global_timeline() {
         let cues = vec![
-            SrtCue { start: 0.0, end: 3.5, text: "a".into() },
-            SrtCue { start: 4.0, end: 6.0, text: "b".into() },
+            SrtCue {
+                start: 0.0,
+                end: 3.5,
+                text: "a".into(),
+            },
+            SrtCue {
+                start: 4.0,
+                end: 6.0,
+                text: "b".into(),
+            },
         ];
         let segments = offset_cues(&cues, 120.0, 2);
         assert_eq!(segments[0].id, "seg-002-000");
@@ -205,11 +298,28 @@ mod tests {
 
     #[test]
     fn builds_expected_cli_arguments() {
-        let args = build_args(Path::new("m.gguf"), Path::new("vad.gguf"), Path::new("seg_0001.wav"));
+        let args = build_args(
+            Path::new("m.gguf"),
+            Path::new("vad.gguf"),
+            Path::new("seg_0001.wav"),
+        );
         let joined = args.join(" ");
         assert!(joined.contains("-m m.gguf"));
         assert!(joined.contains("--vad vad.gguf"));
         assert!(joined.contains("-a seg_0001.wav"));
-        assert!(joined.ends_with("--srt"));
+        assert!(!joined.contains("--srt"));
+    }
+
+    #[test]
+    fn accepts_plain_text_from_the_official_portable_runtime() {
+        let cues = parse_transcript_output("今天我们讨论一下这个项目。\r\n", 3.63);
+        assert_eq!(
+            cues,
+            vec![SrtCue {
+                start: 0.0,
+                end: 3.63,
+                text: "今天我们讨论一下这个项目。".to_string(),
+            }]
+        );
     }
 }

@@ -27,9 +27,10 @@ export interface HistoryEntry {
   modifiedMs: number;
 }
 
-export type TranscribeStage = "preparing" | "splitting" | "transcribing";
+export type TranscribeStage = "preparing" | "splitting" | "transcribing" | "paused";
 
 export interface ProgressEvent {
+  projectId: string;
   jobId: string;
   stage: TranscribeStage;
   percent: number;
@@ -40,6 +41,13 @@ export interface ProgressEvent {
 }
 
 export interface SegmentsEvent {
+  projectId: string;
   jobId: string;
   segments: TranscriptSegment[];
+}
+
+export interface RecordingLevelEvent {
+  recordingId: string;
+  projectId: string;
+  level: number;
 }

@@ -15,10 +15,12 @@ export interface SeekRequest {
  */
 export function AudioPlayer({
   filePath,
+  fileName,
   seekRequest,
   onTimeUpdate,
 }: {
   filePath: string;
+  fileName: string;
   seekRequest: SeekRequest | null;
   onTimeUpdate: (second: number) => void;
 }) {
@@ -60,7 +62,7 @@ export function AudioPlayer({
   return (
     <section
       aria-label="播放器"
-      className="flex h-13 items-center gap-4 rounded-lg border border-line bg-surface px-5 py-3"
+      className="flex min-h-[68px] items-center gap-4 rounded-xl border border-line bg-surface px-5 py-3 shadow-sm"
     >
       <button
         type="button"
@@ -70,6 +72,11 @@ export function AudioPlayer({
       >
         {playing ? <Pause className="size-4" /> : <Play className="ml-0.5 size-4" />}
       </button>
+
+      <div className="hidden min-w-0 w-32 shrink-0 lg:block">
+        <p className="truncate text-xs font-semibold" title={fileName}>{fileName}</p>
+        <p className="mt-0.5 text-[11px] text-text-tertiary">正在播放</p>
+      </div>
 
       <span className="w-14 shrink-0 text-right font-mono text-xs font-medium text-text-secondary">
         {formatClock(current)}

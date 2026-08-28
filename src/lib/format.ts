@@ -36,10 +36,73 @@ export function formatDateTime(ms: number): string {
   );
 }
 
+/** Project timestamps are persisted as Unix seconds. */
+export function formatProjectCreatedAt(value: string): string {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "—";
+  const date = new Date(seconds * 1000);
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 /** Default export file name derived from the source file: `meeting.txt` / `meeting.srt`. */
 export function buildExportName(sourceFileName: string, ext: "txt" | "srt"): string {
   const stem = sourceFileName.replace(/\.[^.]+$/, "") || "transcript";
   return `${stem}.${ext}`;
+}
+
+/** Summary export keeps the project stem and adds a visible content suffix. */
+export function buildSummaryExportName(sourceFileName: string): string {
+  const stem = sourceFileName.replace(/\.[^.]+$/, "") || "transcript";
+  return `${stem}-AI总结.txt`;
+}
+
+/** Display-only truncation. The persisted project name is never changed. */
+export function truncateProjectName(name: string, maxLength = 10): string {
+  const characters = Array.from(name);
+  return characters.length > maxLength
+    ? `${characters.slice(0, maxLength).join("")}…`
+    : name;
+}
+
+export interface HighlightPart {
+  text: string;
+  highlighted: boolean;
+}
+
+/** Split visible text without regular expressions so user input stays literal. */
+export function splitHighlightParts(text: string, query: string): HighlightPart[] {
+  const needle = query.trim();
+  if (!needle) return [{ text, highlighted: false }];
+  const source = text.toLocaleLowerCase();
+  const target = needle.toLocaleLowerCase();
+  const parts: HighlightPart[] = [];
+  let cursor = 0;
+  while (cursor < text.length) {
+    const index = source.indexOf(target, cursor);
+    if (index < 0) {
+      parts.push({ text: text.slice(cursor), highlighted: false });
+      break;
+    }
+    if (index > cursor) parts.push({ text: text.slice(cursor, index), highlighted: false });
+    parts.push({ text: text.slice(index, index + needle.length), highlighted: true });
+    cursor = index + needle.length;
+  }
+  return parts.length > 0 ? parts : [{ text, highlighted: false }];
+}
+
+export function buildSummaryText(summary: {
+  summary: string;
+  keyPoints: string[];
+  actionItems: string[];
+}): string {
+  const keyPoints = summary.keyPoints.map((item) => `- ${item.trim()}`).join("\n");
+  const actionItems = summary.actionItems.map((item) => `- ${item.trim()}`).join("\n");
+  return [
+    `摘要\n${summary.summary.trim()}`,
+    `关键要点\n${keyPoints}`,
+    `待办事项\n${actionItems}`,
+  ].join("\n\n");
 }
 
 /** Plain text of all segments joined by newlines (copy & TXT export content). */

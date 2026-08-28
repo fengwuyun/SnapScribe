@@ -32,15 +32,19 @@ pub fn list(dir: &Path) -> Vec<HistoryEntry> {
             })
         })
         .collect();
-    items.sort_by(|a, b| b.modified_ms.cmp(&a.modified_ms).then(a.file_name.cmp(&b.file_name)));
+    items.sort_by(|a, b| {
+        b.modified_ms
+            .cmp(&a.modified_ms)
+            .then(a.file_name.cmp(&b.file_name))
+    });
     items
 }
 
 /// Read one history file by exact name (validated, no traversal).
 pub fn read_file(dir: &Path, name: &str) -> Result<String, String> {
     validate_filename(name)?;
-    let content = std::fs::read_to_string(dir.join(name))
-        .map_err(|e| format!("无法读取历史文件：{e}"))?;
+    let content =
+        std::fs::read_to_string(dir.join(name)).map_err(|e| format!("无法读取历史文件：{e}"))?;
     Ok(content)
 }
 
