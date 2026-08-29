@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { CheckCircle2, Eye, EyeOff, X, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { getApiKeyDisplayValue } from "@/lib/aiModelPresentation";
 import * as ipc from "@/lib/tauri";
 import type { AIModelConfig, AIModelDraft, AIModelStatus } from "@/types/project";
 
@@ -26,6 +27,7 @@ export function AIModelDialog({ open, model, onOpenChange, onSaved }: {
   const [draft, setDraft] = useState<AIModelDraft>(() => initialDraft(model));
   const [advanced, setAdvanced] = useState(false);
   const [showKey, setShowKey] = useState(false);
+  const [editingSavedKey, setEditingSavedKey] = useState(false);
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState("");
@@ -35,7 +37,7 @@ export function AIModelDialog({ open, model, onOpenChange, onSaved }: {
     if (open) {
       setDraft(initialDraft(model));
       setAdvanced(Boolean(model && (model.endpointMode !== "auto" || model.authType !== "bearer" || model.timeoutSecs !== 60)));
-      setError(""); setTestStatus(null); setShowKey(false);
+      setError(""); setTestStatus(null); setShowKey(false); setEditingSavedKey(false);
     }
   }, [open, model]);
 
@@ -71,7 +73,7 @@ export function AIModelDialog({ open, model, onOpenChange, onSaved }: {
           <label className="text-sm font-medium">API Base URL<input className={inputClass} value={draft.baseUrl} onChange={(event) => update({ baseUrl: event.target.value })} placeholder="http://localhost:11434/v1" /></label>
           <label className="text-sm font-medium">模型 ID<input className={inputClass} value={draft.modelId} onChange={(event) => update({ modelId: event.target.value })} placeholder="例如：qwen2.5:7b" /></label>
           {draft.authType !== "none" && <label className="text-sm font-medium">API Key
-            <div className="relative"><input className={`${inputClass} pr-10`} type={showKey ? "text" : "password"} value={draft.apiKey ?? ""} onChange={(event) => update({ apiKey: event.target.value, clearApiKey: false })} placeholder={model?.hasApiKey ? "已保存，留空保持不变" : "输入 API Key"} /><button type="button" onClick={() => setShowKey((value) => !value)} className="absolute right-2 top-3.5 flex size-7 items-center justify-center text-text-tertiary">{showKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</button></div>
+            <div className="relative"><input className={`${inputClass} pr-10`} type={showKey ? "text" : "password"} value={getApiKeyDisplayValue(Boolean(model?.hasApiKey), draft.apiKey, editingSavedKey)} onFocus={() => { if (model?.hasApiKey && !draft.apiKey) setEditingSavedKey(true); }} onBlur={() => { if (model?.hasApiKey && !draft.apiKey) setEditingSavedKey(false); }} onChange={(event) => { setEditingSavedKey(true); update({ apiKey: event.target.value || undefined, clearApiKey: false }); }} placeholder={model?.hasApiKey ? "已保存，留空保持不变" : "输入 API Key"} /><button type="button" onClick={() => setShowKey((value) => !value)} className="absolute right-2 top-3.5 flex size-7 items-center justify-center text-text-tertiary">{showKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</button></div>
           </label>}
           <button type="button" onClick={() => setAdvanced((value) => !value)} className="w-fit text-sm font-semibold text-primary">{advanced ? "收起高级设置" : "展开高级设置"}</button>
           {advanced && <div className="grid gap-4 rounded-md bg-bg p-4 sm:grid-cols-2">

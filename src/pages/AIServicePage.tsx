@@ -3,13 +3,9 @@ import { CheckCircle2, CircleAlert, GripVertical, Pencil, Plus, Sparkles, Trash2
 import { AIModelDialog } from "@/components/AIModelDialog";
 import { DeleteConfirmationDialog } from "@/components/DeleteConfirmationDialog";
 import { Button } from "@/components/ui/Button";
+import { getAIModelStatusLabel } from "@/lib/aiModelPresentation";
 import * as ipc from "@/lib/tauri";
-import type { AIModelConfig, AIModelStatusKind, AIServiceConfig } from "@/types/project";
-
-const statusLabels: Record<AIModelStatusKind, string> = {
-  untested: "未测试", available: "可用", timeout: "请求超时", "auth-failed": "鉴权失败",
-  "rate-limited": "已限流", "service-error": "服务异常", "config-error": "配置错误", "invalid-response": "响应无效",
-};
+import type { AIModelConfig, AIServiceConfig } from "@/types/project";
 
 export function AIServicePage({ focusModels = false, returnToProjectId, onReturn }: { focusModels?: boolean; returnToProjectId?: string; onReturn: (projectId: string) => void }) {
   const [config, setConfig] = useState<AIServiceConfig | null>(null);
@@ -80,7 +76,7 @@ export function AIServicePage({ focusModels = false, returnToProjectId, onReturn
             <GripVertical className="size-4 cursor-grab text-text-tertiary" /><span className="text-xs font-mono text-text-tertiary">{model.order + 1}</span>
             <div className="min-w-0"><div className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{model.name}</span>{isDefault && <span className="rounded-round bg-primary-soft px-2 py-0.5 text-[10px] font-semibold text-primary">默认</span>}</div><p className="mt-0.5 truncate text-xs text-text-tertiary" title={model.baseUrl}>{model.baseUrl}</p></div>
             <span className="truncate font-mono text-xs text-text-secondary" title={model.modelId}>{model.modelId}</span>
-            <span title={model.lastStatus.message} className={`flex items-center gap-1.5 text-xs font-medium ${healthy ? "text-success" : model.lastStatus.status === "untested" ? "text-text-tertiary" : "text-error"}`}>{healthy ? <CheckCircle2 className="size-4" /> : <CircleAlert className="size-4" />}{statusLabels[model.lastStatus.status]}</span>
+            <span title={model.lastStatus.message} className={`flex items-center gap-1.5 text-xs font-medium ${healthy ? "text-success" : model.lastStatus.status === "untested" ? "text-text-tertiary" : "text-error"}`}>{healthy ? <CheckCircle2 className="size-4" /> : <CircleAlert className="size-4" />}{getAIModelStatusLabel(model.lastStatus.status)}</span>
             <button type="button" onClick={() => void toggle(model)} className={`relative h-6 w-11 rounded-round transition-colors ${model.enabled ? "bg-primary" : "bg-line"}`} aria-label={model.enabled ? "停用模型" : "启用模型"}><span className={`absolute top-1 size-4 rounded-round bg-white transition-transform ${model.enabled ? "left-6" : "left-1"}`} /></button>
             <div className="flex justify-end gap-1"><button className="flex size-8 items-center justify-center rounded-md text-text-secondary hover:bg-primary-soft hover:text-primary" onClick={() => { setSelected(model); setDialogOpen(true); }} aria-label="编辑模型"><Pencil className="size-4" /></button><button className="flex size-8 items-center justify-center rounded-md text-text-secondary hover:bg-[#FFF1F1] hover:text-error" onClick={() => setDeleteTarget(model)} aria-label="删除模型"><Trash2 className="size-4" /></button></div>
           </div>;
