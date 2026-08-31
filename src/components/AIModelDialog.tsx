@@ -3,6 +3,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { CheckCircle2, Eye, EyeOff, X, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { getApiKeyDisplayValue } from "@/lib/aiModelPresentation";
+import { savedModelRetestDraft } from "@/lib/aiModelWorkflow";
 import * as ipc from "@/lib/tauri";
 import type { AIModelConfig, AIModelDraft, AIModelStatus } from "@/types/project";
 
@@ -57,7 +58,9 @@ export function AIModelDialog({ open, model, onOpenChange, onSaved }: {
   async function save() {
     setBusy(true); setError("");
     try {
-      if (model) await ipc.aiModelUpdate(model.id, draft); else await ipc.aiModelCreate(draft);
+      const saved = model ? await ipc.aiModelUpdate(model.id, draft) : await ipc.aiModelCreate(draft);
+      const retestDraft = savedModelRetestDraft(draft, saved.id, testStatus);
+      if (retestDraft) await ipc.aiModelTest(retestDraft);
       onSaved(); onOpenChange(false);
     } catch (reason) { setError(String(reason)); }
     finally { setBusy(false); }

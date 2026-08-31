@@ -9,3 +9,5 @@ export const toggleActionItem = (items: ActionItem[], id: string) =>
 export const removeActionItem = (items: ActionItem[], id: string) =>
   items.filter((item) => item.id !== id);
 
+export const formatActionItemsForCopy = (items: ActionItem[]) =>
+  `待办事项\n${items.map((item) => `${item.completed ? "☑" : "☐"} ${item.text}`).join("\n")}`;
