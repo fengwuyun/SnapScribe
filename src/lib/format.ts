@@ -94,10 +94,10 @@ export function splitHighlightParts(text: string, query: string): HighlightPart[
 export function buildSummaryText(summary: {
   summary: string;
   keyPoints: string[];
-  actionItems: string[];
+  actionItems: Array<{ text: string }>;
 }): string {
   const keyPoints = summary.keyPoints.map((item) => `- ${item.trim()}`).join("\n");
-  const actionItems = summary.actionItems.map((item) => `- ${item.trim()}`).join("\n");
+  const actionItems = summary.actionItems.map((item) => `- ${item.text.trim()}`).join("\n");
   return [
     `摘要\n${summary.summary.trim()}`,
     `关键要点\n${keyPoints}`,

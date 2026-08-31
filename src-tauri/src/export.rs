@@ -39,7 +39,7 @@ pub fn build_summary_txt(summary: &AISummary) -> String {
     let action_items = summary
         .action_items
         .iter()
-        .map(|item| format!("- {}", item.trim()))
+        .map(|item| format!("- {}", item.text.trim()))
         .collect::<Vec<_>>()
         .join("\n");
     format!(
@@ -109,7 +109,7 @@ mod tests {
             generated_at: "1".into(),
             summary: "结论".into(),
             key_points: vec!["要点一".into(), "要点二".into()],
-            action_items: vec!["跟进".into()],
+            action_items: vec![crate::model::ActionItem { id: "a".into(), text: "跟进".into(), completed: false }],
             model: "model".into(),
             model_config_id: None,
             model_name: None,

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   SAVED_API_KEY_MASK,
   getApiKeyDisplayValue,
+  getAIModelAvailability,
   getAIModelStatusLabel,
 } from "@/lib/aiModelPresentation";
 
@@ -15,5 +16,10 @@ describe("AI model presentation", () => {
 
   it("labels a successfully tested model as connected", () => {
     expect(getAIModelStatusLabel("available")).toBe("连通");
+  });
+
+  it("marks an enabled keyed model without a saved key as needing configuration", () => {
+    expect(getAIModelAvailability({ enabled: true, authType: "bearer", hasApiKey: false })).toBe("needs-key");
+    expect(getAIModelAvailability({ enabled: true, authType: "none", hasApiKey: false })).toBe("ready");
   });
 });

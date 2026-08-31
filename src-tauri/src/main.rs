@@ -65,6 +65,7 @@ fn main() {
             commands::settings_get,
             commands::about_get,
             commands::open_repository,
+            commands::settings_open_data_root,
             commands::settings_save,
             commands::ai_test_connection,
             commands::ai_service_get,
@@ -76,6 +77,7 @@ fn main() {
             commands::ai_model_set_enabled,
             commands::ai_model_test,
             commands::ai_generate_summary,
+            commands::project_action_items_save,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

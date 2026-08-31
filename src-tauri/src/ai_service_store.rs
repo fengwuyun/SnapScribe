@@ -5,6 +5,8 @@ use crate::model::{
     AIServiceConfig, AISettings,
 };
 
+pub const GLM_47_FLASH_PRESET_KEY: &str = "glm-4.7-flash";
+
 pub struct AIServiceStore {
     config_dir: PathBuf,
     path: PathBuf,
@@ -56,11 +58,40 @@ impl AIServiceStore {
         Ok(config)
     }
 
+    pub fn ensure_default_presets(&self) -> Result<AIServiceConfig, String> {
+        let mut config = self.load()?;
+        if !config.models.iter().any(|model| {
+            model.preset_key.as_deref() == Some(GLM_47_FLASH_PRESET_KEY)
+        }) {
+            config.models.insert(0, AIModelConfig {
+                id: uuid::Uuid::new_v4().to_string(),
+                preset_key: Some(GLM_47_FLASH_PRESET_KEY.to_string()),
+                name: "GLM 4.7 Flash (免费)".to_string(),
+                protocol: AIProtocol::OpenAIChat,
+                base_url: "https://open.bigmodel.cn/api/paas/v4".to_string(),
+                model_id: GLM_47_FLASH_PRESET_KEY.to_string(),
+                endpoint_mode: AIEndpointMode::Auto,
+                custom_path: None,
+                auth_type: AIAuthType::Bearer,
+                auth_header: None,
+                timeout_secs: 60,
+                enabled: true,
+                order: 0,
+                has_api_key: false,
+                last_status: AIModelStatus::default(),
+            });
+            assign_order(&mut config.models);
+            self.save(&config)?;
+        }
+        Ok(config)
+    }
+
     pub fn create_model(&self, draft: &AIModelDraft) -> Result<AIModelConfig, String> {
         validate_draft(draft)?;
         let mut config = self.load()?;
         let model = AIModelConfig {
             id: uuid::Uuid::new_v4().to_string(),
+            preset_key: None,
             name: draft.name.trim().to_string(),
             protocol: draft.protocol,
             base_url: draft.base_url.trim().trim_end_matches('/').to_string(),
@@ -270,6 +301,31 @@ mod tests {
             .unwrap();
         assert_eq!(config.models[0].name, "two");
         assert_eq!(config.models[0].order, 0);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn ensures_glm_preset_once_and_keeps_existing_order() {
+        let dir =
+            std::env::temp_dir().join(format!("snapscribe-ai-preset-{}", uuid::Uuid::new_v4()));
+        let store = AIServiceStore::new(dir.clone());
+        store.create_model(&draft("existing-a")).unwrap();
+        store.create_model(&draft("existing-b")).unwrap();
+
+        let first = store.ensure_default_presets().unwrap();
+        let second = store.ensure_default_presets().unwrap();
+
+        assert_eq!(
+            second
+                .models
+                .iter()
+                .filter(|model| model.preset_key.as_deref() == Some("glm-4.7-flash"))
+                .count(),
+            1
+        );
+        assert_eq!(first.models[0].model_id, "glm-4.7-flash");
+        assert_eq!(first.models[1].name, "existing-a");
+        assert_eq!(first.models[2].name, "existing-b");
         std::fs::remove_dir_all(dir).ok();
     }
 }

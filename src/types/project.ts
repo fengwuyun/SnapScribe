@@ -49,10 +49,16 @@ export interface AISummary {
   generatedAt: string;
   summary: string;
   keyPoints: string[];
-  actionItems: string[];
+  actionItems: ActionItem[];
   model: string;
   modelConfigId?: string;
   modelName?: string;
+}
+
+export interface ActionItem {
+  id: string;
+  text: string;
+  completed: boolean;
 }
 
 export type AIProtocol = "openai-chat";
@@ -69,6 +75,7 @@ export interface AIModelStatus {
 
 export interface AIModelConfig {
   id: string;
+  presetKey?: "glm-4.7-flash";
   name: string;
   protocol: AIProtocol;
   baseUrl: string;
@@ -138,7 +145,7 @@ export interface TranscriptionJobStatus {
 export interface AppSettings {
   schemaVersion: number;
   dataRoot: string;
-  importStrategy: "reference" | "copy";
+  importStrategy: "reference" | "copy" | "move";
   ai: {
     serviceType: "openai-compatible";
     baseUrl: string;

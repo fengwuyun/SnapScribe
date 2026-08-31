@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 
 use crate::model::{
-    AISummary, ImportStrategy, MediaInfo, MediaOrigin, MediaReference, MediaStorage, ProjectDetail,
+    ActionItem, AISummary, ImportStrategy, MediaInfo, MediaOrigin, MediaReference, MediaStorage, ProjectDetail,
     ProjectListItem, ProjectSort, ProjectStatus, TranscriptDocument, TranscriptionProject,
 };
 
@@ -37,17 +37,26 @@ impl ProjectStore {
         let dir = self.project_dir(&id);
         std::fs::create_dir_all(&dir).map_err(|e| format!("无法创建项目目录：{e}"))?;
 
+        let should_remove_source = strategy == ImportStrategy::Move;
         let (storage, stored_path) = match strategy {
             ImportStrategy::Reference => (
                 MediaStorage::Reference,
                 source.to_string_lossy().to_string(),
             ),
-            ImportStrategy::Copy => {
-                let media_dir = dir.join("media");
-                std::fs::create_dir_all(&media_dir)
-                    .map_err(|e| format!("无法创建媒体目录：{e}"))?;
-                let target = media_dir.join(safe_file_name(&info.file_name));
-                std::fs::copy(source, &target).map_err(|e| format!("复制媒体失败：{e}"))?;
+            ImportStrategy::Copy | ImportStrategy::Move => {
+                let target = dir.join(safe_file_name(&info.file_name));
+                let temp = dir.join(format!(".media-{}.tmp", uuid::Uuid::new_v4()));
+                let mut input = File::open(source).map_err(|e| format!("无法读取源媒体：{e}"))?;
+                let mut output = File::create(&temp).map_err(|e| format!("无法创建目标媒体：{e}"))?;
+                std::io::copy(&mut input, &mut output).map_err(|e| format!("复制媒体失败：{e}"))?;
+                output.sync_all().map_err(|e| format!("无法写入目标媒体：{e}"))?;
+                drop(output);
+                let copied_size = std::fs::metadata(&temp).map_err(|e| format!("无法校验目标媒体：{e}"))?.len();
+                if copied_size != info.size_bytes {
+                    std::fs::remove_file(&temp).ok();
+                    return Err("目标媒体大小校验失败".to_string());
+                }
+                std::fs::rename(&temp, &target).map_err(|e| format!("无法启用目标媒体：{e}"))?;
                 (
                     MediaStorage::ManagedCopy,
                     target.to_string_lossy().to_string(),
@@ -89,6 +98,9 @@ impl ProjectStore {
         };
         atomic_write_json(&dir.join("project.json"), &project)?;
         atomic_write_json(&dir.join("transcript.json"), &transcript)?;
+        if should_remove_source {
+            std::fs::remove_file(source).map_err(|e| format!("媒体已保存到 SnapScribe，但无法删除原文件：{e}"))?;
+        }
         Ok(project)
     }
 
@@ -445,6 +457,21 @@ impl ProjectStore {
         project.updated_at = utc_timestamp();
         atomic_write_json(&self.project_dir(project_id).join("project.json"), &project)
     }
+
+    pub fn save_action_items(&self, project_id: &str, items: Vec<ActionItem>) -> Result<AISummary, String> {
+        let mut ids = std::collections::HashSet::new();
+        for item in &items {
+            if item.id.trim().is_empty() || item.text.trim().is_empty() || !ids.insert(item.id.clone()) {
+                return Err("待办事项包含空内容或重复 ID".to_string());
+            }
+        }
+        let mut detail = self.read_detail(project_id)?;
+        let mut summary = detail.summary.take().ok_or("尚未生成 AI 总结")?;
+        summary.schema_version = 2;
+        summary.action_items = items;
+        self.save_summary(project_id, &summary)?;
+        Ok(summary)
+    }
 }
 
 fn validate_project_name(name: &str) -> Result<String, String> {
@@ -531,7 +558,7 @@ mod tests {
 
     use super::ProjectStore;
     use crate::model::{
-        ImportStrategy, MediaInfo, ProjectSort, TranscriptDocument, TranscriptSegment,
+        ActionItem, AISummary, ImportStrategy, MediaInfo, ProjectSort, TranscriptDocument, TranscriptSegment,
     };
 
     fn temp_root(label: &str) -> PathBuf {
@@ -565,6 +592,55 @@ mod tests {
         assert_eq!(created.media.storage.as_str(), "reference");
         assert_eq!(created.media.path.as_deref(), source.to_str());
         assert!(!store.project_dir(&created.id).join("media").exists());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn moves_media_into_the_project_directory_after_commit() {
+        let root = temp_root("move");
+        let source = root.join("source").join("meeting.wav");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, b"RIFF").unwrap();
+        let store = ProjectStore::new(root.join("data"));
+
+        let created = store
+            .create_imported_project(&source, &media_info(), ImportStrategy::Move)
+            .unwrap();
+        let target = PathBuf::from(created.media.path.unwrap());
+
+        assert!(!source.exists());
+        assert_eq!(target.parent(), Some(store.project_dir(&created.id).as_path()));
+        assert_eq!(std::fs::read(target).unwrap(), b"RIFF");
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn saves_editable_action_items_without_replacing_summary_content() {
+        let root = temp_root("action-items");
+        let source = root.join("source").join("meeting.wav");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, b"RIFF").unwrap();
+        let store = ProjectStore::new(root.join("data"));
+        let project = store.create_imported_project(&source, &media_info(), ImportStrategy::Reference).unwrap();
+        let summary = AISummary {
+            schema_version: 2,
+            project_id: project.id.clone(),
+            source_transcript_revision: 0,
+            generated_at: "now".into(),
+            summary: "原摘要".into(),
+            key_points: vec!["原要点".into()],
+            action_items: Vec::new(),
+            model: "model".into(),
+            model_config_id: None,
+            model_name: None,
+        };
+        store.save_summary(&project.id, &summary).unwrap();
+
+        let saved = store.save_action_items(&project.id, vec![ActionItem { id: "a".into(), text: "跟进".into(), completed: true }]).unwrap();
+
+        assert_eq!(saved.summary, "原摘要");
+        assert_eq!(saved.key_points, vec!["原要点"]);
+        assert!(saved.action_items[0].completed);
         std::fs::remove_dir_all(root).ok();
     }
 

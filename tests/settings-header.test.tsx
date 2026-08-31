@@ -1,5 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+// @ts-expect-error Node types are intentionally excluded from the desktop app tsconfig.
+import { readFileSync } from "node:fs";
 import { AppShell } from "@/components/AppShell";
 import { SettingsPageHeader } from "@/pages/SettingsPage";
 
@@ -33,5 +35,12 @@ describe("settings page header", () => {
     expect(markup).toContain("设置");
     expect(markup).not.toContain('aria-hidden="true"');
     expect(markup).not.toContain("grid-rows-[0fr]");
+  });
+
+  it("offers managed move storage and opens the saved data directory", () => {
+    const source = readFileSync(new URL("../src/pages/SettingsPage.tsx", import.meta.url), "utf8");
+    expect(source).toContain('<option value="move">移动到 SnapScribe');
+    expect(source).toContain("打开当前文件夹");
+    expect(source).toContain("settingsOpenDataRoot");
   });
 });

@@ -103,7 +103,7 @@ describe("project presentation", () => {
     expect(buildSummaryText({
       summary: "本次确定上线计划。",
       keyPoints: ["周五发布", "保留回滚方案"],
-      actionItems: ["完成验收"],
+      actionItems: [{ text: "完成验收" }],
     })).toBe("摘要\n本次确定上线计划。\n\n关键要点\n- 周五发布\n- 保留回滚方案\n\n待办事项\n- 完成验收");
   });
 });

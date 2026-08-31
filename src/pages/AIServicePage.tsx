@@ -3,7 +3,7 @@ import { CheckCircle2, CircleAlert, GripVertical, Pencil, Plus, Sparkles, Trash2
 import { AIModelDialog } from "@/components/AIModelDialog";
 import { DeleteConfirmationDialog } from "@/components/DeleteConfirmationDialog";
 import { Button } from "@/components/ui/Button";
-import { getAIModelStatusLabel } from "@/lib/aiModelPresentation";
+import { getAIModelAvailability, getAIModelStatusLabel } from "@/lib/aiModelPresentation";
 import * as ipc from "@/lib/tauri";
 import type { AIModelConfig, AIServiceConfig } from "@/types/project";
 
@@ -72,11 +72,12 @@ export function AIServicePage({ focusModels = false, returnToProjectId, onReturn
         {config.models.map((model) => {
           const isDefault = model.enabled && enabled[0]?.id === model.id;
           const healthy = model.lastStatus.status === "available";
+          const needsKey = getAIModelAvailability(model) === "needs-key";
           return <div key={model.id} draggable onDragStart={() => setDraggingId(model.id)} onDragEnd={() => setDraggingId(null)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { const bounds = event.currentTarget.getBoundingClientRect(); void moveTo(model.id, event.clientY > bounds.top + bounds.height / 2); }} className={`grid min-h-16 grid-cols-[36px_44px_minmax(140px,1.4fr)_minmax(120px,1fr)_minmax(110px,1fr)_88px_96px] items-center gap-2 border-b border-divider px-3 transition-colors last:border-b-0 ${draggingId === model.id ? "bg-primary-soft opacity-60" : "hover:bg-bg"}`}>
             <GripVertical className="size-4 cursor-grab text-text-tertiary" /><span className="text-xs font-mono text-text-tertiary">{model.order + 1}</span>
             <div className="min-w-0"><div className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{model.name}</span>{isDefault && <span className="rounded-round bg-primary-soft px-2 py-0.5 text-[10px] font-semibold text-primary">默认</span>}</div><p className="mt-0.5 truncate text-xs text-text-tertiary" title={model.baseUrl}>{model.baseUrl}</p></div>
             <span className="truncate font-mono text-xs text-text-secondary" title={model.modelId}>{model.modelId}</span>
-            <span title={model.lastStatus.message} className={`flex items-center gap-1.5 text-xs font-medium ${healthy ? "text-success" : model.lastStatus.status === "untested" ? "text-text-tertiary" : "text-error"}`}>{healthy ? <CheckCircle2 className="size-4" /> : <CircleAlert className="size-4" />}{getAIModelStatusLabel(model.lastStatus.status)}</span>
+            <span title={needsKey ? "填写 API Key 后即可使用" : model.lastStatus.message} className={`flex items-center gap-1.5 text-xs font-medium ${healthy ? "text-success" : needsKey || model.lastStatus.status === "untested" ? "text-text-tertiary" : "text-error"}`}>{healthy ? <CheckCircle2 className="size-4" /> : <CircleAlert className="size-4" />}{needsKey ? "待配置" : getAIModelStatusLabel(model.lastStatus.status)}</span>
             <button type="button" onClick={() => void toggle(model)} className={`relative h-6 w-11 rounded-round transition-colors ${model.enabled ? "bg-primary" : "bg-line"}`} aria-label={model.enabled ? "停用模型" : "启用模型"}><span className={`absolute top-1 size-4 rounded-round bg-white transition-transform ${model.enabled ? "left-6" : "left-1"}`} /></button>
             <div className="flex justify-end gap-1"><button className="flex size-8 items-center justify-center rounded-md text-text-secondary hover:bg-primary-soft hover:text-primary" onClick={() => { setSelected(model); setDialogOpen(true); }} aria-label="编辑模型"><Pencil className="size-4" /></button><button className="flex size-8 items-center justify-center rounded-md text-text-secondary hover:bg-[#FFF1F1] hover:text-error" onClick={() => setDeleteTarget(model)} aria-label="删除模型"><Trash2 className="size-4" /></button></div>
           </div>;

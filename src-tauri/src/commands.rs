@@ -471,7 +471,7 @@ pub fn settings_get(app: AppHandle) -> Result<AppSettings, String> {
 pub fn about_get() -> AboutInfo {
     AboutInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
-        build_time: "2026-08-28".to_string(),
+        build_time: "2026-08-31".to_string(),
         repository_url: "https://github.com/fengwuyun/SnapScribe".to_string(),
     }
 }
@@ -484,6 +484,20 @@ pub fn open_repository() -> Result<(), String> {
         .arg("https://github.com/fengwuyun/SnapScribe")
         .spawn()
         .map_err(|e| format!("无法打开 GitHub 仓库：{e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn settings_open_data_root(app: AppHandle) -> Result<(), String> {
+    let settings = settings_store(&app)?.load()?;
+    let path = PathBuf::from(settings.data_root);
+    std::fs::create_dir_all(&path).map_err(|e| format!("无法创建数据目录：{e}"))?;
+    let mut command = std::process::Command::new("explorer.exe");
+    crate::proc::hide_console(&mut command);
+    command
+        .arg(&path)
+        .spawn()
+        .map_err(|e| format!("无法打开数据目录：{e}"))?;
     Ok(())
 }
 
@@ -637,6 +651,15 @@ pub fn ai_generate_summary(app: AppHandle, project_id: String) -> Result<AISumma
     )?;
     projects.save_summary(&project_id, &summary)?;
     Ok(summary)
+}
+
+#[tauri::command]
+pub fn project_action_items_save(
+    app: AppHandle,
+    project_id: String,
+    items: Vec<crate::model::ActionItem>,
+) -> Result<AISummary, String> {
+    project_store(&app)?.save_action_items(&project_id, items)
 }
 
 /// Cancel a job by id: signal the loop and kill any in-flight ASR child.
@@ -823,6 +846,7 @@ fn ensure_ai_service_migrated(app: &AppHandle) -> Result<AIServiceStore, String>
             SecretStore::for_model(store.config_dir(), &model.id).save(&legacy_secret.load()?)?;
         }
     }
+    store.ensure_default_presets()?;
     Ok(store)
 }
 

@@ -73,7 +73,11 @@ pub fn generate_summary_with_failover(
     let mut models = config
         .models
         .into_iter()
-        .filter(|model| model.enabled)
+        .filter(|model| {
+            model.enabled
+                && (model.auth_type == AIAuthType::None
+                    || SecretStore::for_model(config_dir, &model.id).has_key())
+        })
         .collect::<Vec<_>>();
     models.sort_by_key(|model| model.order);
     if models.is_empty() {
@@ -187,9 +191,16 @@ fn generate_summary_for_model(
         .trim()
         .to_string();
     let key_points = string_array(&parsed, "keyPoints")?;
-    let action_items = string_array(&parsed, "actionItems")?;
+    let action_items = string_array(&parsed, "actionItems")?
+        .into_iter()
+        .map(|text| crate::model::ActionItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            text,
+            completed: false,
+        })
+        .collect();
     Ok(AISummary {
-        schema_version: 1,
+        schema_version: 2,
         project_id: project_id.to_string(),
         source_transcript_revision: revision,
         generated_at: now_string(),
@@ -381,6 +392,7 @@ fn now_string() -> String {
 fn legacy_model(settings: &AISettings) -> AIModelConfig {
     AIModelConfig {
         id: "legacy".to_string(),
+        preset_key: None,
         name: "现有模型".to_string(),
         protocol: AIProtocol::OpenAIChat,
         base_url: settings.base_url.clone(),
@@ -400,6 +412,7 @@ fn legacy_model(settings: &AISettings) -> AIModelConfig {
 fn draft_model(draft: &AIModelDraft) -> AIModelConfig {
     AIModelConfig {
         id: draft.id.clone().unwrap_or_else(|| "test".to_string()),
+        preset_key: None,
         name: draft.name.clone(),
         protocol: draft.protocol,
         base_url: draft.base_url.clone(),

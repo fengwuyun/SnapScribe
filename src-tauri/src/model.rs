@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum ImportStrategy {
     Reference,
     Copy,
+    Move,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,6 +106,8 @@ impl Default for AIModelStatus {
 #[serde(rename_all = "camelCase")]
 pub struct AIModelConfig {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset_key: Option<String>,
     pub name: String,
     pub protocol: AIProtocol,
     pub base_url: String,
@@ -269,6 +272,36 @@ pub struct TranscriptDocument {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ActionItem {
+    pub id: String,
+    pub text: String,
+    pub completed: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ActionItemCompat {
+    Text(String),
+    Item(ActionItem),
+}
+
+fn deserialize_action_items<'de, D>(deserializer: D) -> Result<Vec<ActionItem>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let items = Vec::<ActionItemCompat>::deserialize(deserializer)?;
+    Ok(items.into_iter().map(|item| match item {
+        ActionItemCompat::Text(text) => ActionItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            text,
+            completed: false,
+        },
+        ActionItemCompat::Item(item) => item,
+    }).collect())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AISummary {
     pub schema_version: u32,
     pub project_id: String,
@@ -276,7 +309,8 @@ pub struct AISummary {
     pub generated_at: String,
     pub summary: String,
     pub key_points: Vec<String>,
-    pub action_items: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_action_items")]
+    pub action_items: Vec<ActionItem>,
     pub model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_config_id: Option<String>,
@@ -479,5 +513,23 @@ mod project_event_tests {
             value["repositoryUrl"],
             "https://github.com/fengwuyun/SnapScribe"
         );
+    }
+
+    #[test]
+    fn legacy_string_action_items_deserialize_as_editable_items() {
+        let value = serde_json::json!({
+            "schemaVersion": 1,
+            "projectId": "p",
+            "sourceTranscriptRevision": 1,
+            "generatedAt": "now",
+            "summary": "摘要",
+            "keyPoints": [],
+            "actionItems": ["跟进合同"],
+            "model": "m"
+        });
+        let summary: super::AISummary = serde_json::from_value(value).unwrap();
+        assert_eq!(summary.action_items[0].text, "跟进合同");
+        assert!(!summary.action_items[0].completed);
+        assert!(!summary.action_items[0].id.is_empty());
     }
 }

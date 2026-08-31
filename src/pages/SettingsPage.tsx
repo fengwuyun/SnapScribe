@@ -63,6 +63,11 @@ export function SettingsPage() {
     if (path) setDraft({ ...draft!, dataRoot: path });
   }
 
+  async function openDataRoot() {
+    try { await ipc.settingsOpenDataRoot(); }
+    catch (error) { setMessage(String(error)); }
+  }
+
   function navigateToSection(id: SettingsSectionId) {
     setActiveSection(id);
     sectionRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -74,14 +79,16 @@ export function SettingsPage() {
       <section id="storage" ref={(node) => { sectionRefs.current.storage = node; }} className="scroll-mt-16 rounded-lg border border-line bg-surface p-6 shadow-sm">
         <h2 className="text-lg font-semibold">文件存储</h2>
         <label className="mt-5 block text-sm font-medium">转录数据保存位置</label>
-        <div className="mt-2 flex gap-2"><input value={draft.dataRoot} onChange={(event) => setDraft({ ...draft, dataRoot: event.target.value })} className="h-10 min-w-0 flex-1 rounded-md border border-line px-3 text-sm outline-none focus:border-primary" /><Button variant="secondary" onClick={() => void chooseDataRoot()}>选择位置</Button></div>
+        <div className="mt-2 flex gap-2"><input value={draft.dataRoot} onChange={(event) => setDraft({ ...draft, dataRoot: event.target.value })} className="h-10 min-w-0 flex-1 rounded-md border border-line px-3 text-sm outline-none focus:border-primary" /><Button variant="secondary" onClick={() => void openDataRoot()}>打开当前文件夹</Button><Button variant="secondary" onClick={() => void chooseDataRoot()}>选择位置</Button></div>
         <p className="mt-2 text-xs text-text-tertiary">更改后点击保存，现有项目会复制到新位置，旧位置保留。</p>
         <label className="mt-5 block text-sm font-medium">导入音视频策略
           <select value={draft.importStrategy} onChange={(event) => setDraft({ ...draft, importStrategy: event.target.value as AppSettings["importStrategy"] })} className="mt-2 h-10 w-full rounded-md border border-line bg-surface px-3 text-sm">
             <option value="reference">仅引用原文件（默认 / 推荐）</option>
             <option value="copy">复制到 SnapScribe</option>
+            <option value="move">移动到 SnapScribe（便于管理）</option>
           </select>
         </label>
+        {draft.importStrategy === "move" && <p className="mt-2 text-xs text-warning">导入成功后原位置文件将被删除，SnapScribe 内只保留一份。</p>}
         <p className="mt-3 text-xs text-text-tertiary">软件录音默认保存，可在项目详情中单独删除，不影响文本和总结。</p>
       </section>
       {about && <section id="about" ref={(node) => { sectionRefs.current.about = node; }} className="scroll-mt-16 rounded-lg border border-line bg-surface p-6 shadow-sm">

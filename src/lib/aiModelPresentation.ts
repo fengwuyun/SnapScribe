@@ -25,3 +25,12 @@ export function getApiKeyDisplayValue(
 export function getAIModelStatusLabel(status: AIModelStatusKind) {
   return AI_MODEL_STATUS_LABELS[status];
 }
+
+export function getAIModelAvailability(model: {
+  enabled: boolean;
+  authType: "bearer" | "x-api-key" | "custom-header" | "none";
+  hasApiKey: boolean;
+}) {
+  if (!model.enabled) return "disabled" as const;
+  return model.authType !== "none" && !model.hasApiKey ? "needs-key" as const : "ready" as const;
+}

@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import type { TranscriptSegment } from "@/types/transcript";
 import { formatClock } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { hasTextSelection } from "@/lib/textSelection";
 
 /**
  * Progressive transcript list per UI_DESIGN_SPEC §13. New segments append at
@@ -15,6 +16,7 @@ export function TranscriptList({
   nextSegmentIndex,
   seekable = false,
   onSeek,
+  onCopy,
 }: {
   segments: TranscriptSegment[];
   activeSegmentId: string | null;
@@ -24,6 +26,7 @@ export function TranscriptList({
   /** Timestamps become seek buttons only once a player is available. */
   seekable?: boolean;
   onSeek: (second: number) => void;
+  onCopy?: (message: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const followRef = useRef(true);
@@ -66,23 +69,22 @@ export function TranscriptList({
               )}
             >
               {seekable ? (
-                <button
-                  type="button"
-                  onClick={() => onSeek(segment.start)}
-                  aria-label={`从 ${formatClock(segment.start)} 播放：${segment.text}`}
-                  className="flex w-full gap-3 px-4 py-3 text-left leading-[1.7] outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
-                >
-                  <span className="w-16 shrink-0 font-mono text-xs font-medium text-primary">
+                <div className="flex w-full gap-3 px-4 py-3 text-left leading-[1.7]">
+                  <button type="button" onClick={() => onSeek(segment.start)} aria-label={`从 ${formatClock(segment.start)} 播放`} className="w-16 shrink-0 font-mono text-xs font-medium text-primary outline-none focus-visible:ring-2 focus-visible:ring-primary">
                     {formatClock(segment.start)}
-                  </span>
-                  <span className="text-sm text-text-primary">{segment.text}</span>
-                </button>
+                  </button>
+                  <span
+                    className="min-w-0 flex-1 cursor-text select-text text-sm text-text-primary"
+                    onClick={() => { if (!hasTextSelection(window.getSelection())) onSeek(segment.start); }}
+                    onDoubleClick={() => { void navigator.clipboard.writeText(segment.text).then(() => onCopy?.("已复制该段")).catch(() => onCopy?.("复制失败")); }}
+                  >{segment.text}</span>
+                </div>
               ) : (
                 <div className="flex gap-3 px-4 py-3 leading-[1.7]">
                   <span className="w-16 shrink-0 font-mono text-xs font-medium text-primary">
                     {formatClock(segment.start)}
                   </span>
-                  <p className="text-sm text-text-primary">{segment.text}</p>
+                  <p className="cursor-text select-text text-sm text-text-primary" onDoubleClick={() => { void navigator.clipboard.writeText(segment.text).then(() => onCopy?.("已复制该段")).catch(() => onCopy?.("复制失败")); }}>{segment.text}</p>
                 </div>
               )}
             </li>

@@ -10,6 +10,7 @@ import type {
 } from "@/types/transcript";
 import type {
   AISummary,
+  ActionItem,
   AIModelConfig,
   AIModelDraft,
   AIModelStatus,
@@ -154,6 +155,10 @@ export function openRepository(): Promise<void> {
   return invoke("open_repository");
 }
 
+export function settingsOpenDataRoot(): Promise<void> {
+  return invoke("settings_open_data_root");
+}
+
 export function settingsSave(settings: AppSettings): Promise<AppSettings> {
   return invoke("settings_save", { settings });
 }
@@ -164,6 +169,10 @@ export function aiTestConnection(settings: AppSettings): Promise<ConnectionResul
 
 export function aiGenerateSummary(projectId: string): Promise<AISummary> {
   return invoke("ai_generate_summary", { projectId });
+}
+
+export function projectActionItemsSave(projectId: string, items: ActionItem[]): Promise<AISummary> {
+  return invoke("project_action_items_save", { projectId, items });
 }
 
 export function aiServiceGet(): Promise<AIServiceConfig> {
