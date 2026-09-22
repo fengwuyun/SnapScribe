@@ -5,6 +5,7 @@ mod ai;
 mod ai_service_store;
 mod asr;
 mod commands;
+mod diarization;
 mod export;
 mod ffmpeg;
 mod history;
@@ -54,6 +55,7 @@ fn main() {
             commands::project_delete,
             commands::project_rename,
             commands::project_save_transcript,
+            commands::project_update_speakers,
             commands::project_relink_media,
             commands::project_delete_managed_media,
             commands::project_open_media_location,

@@ -104,6 +104,7 @@ pub fn project_create_from_media(
     app: AppHandle,
     state: State<'_, AppState>,
     path: String,
+    diarization_enabled: bool,
 ) -> Result<StartProjectResult, String> {
     let runtime = resolve_runtime(&app)?;
     let input = checked_input(&path)?;
@@ -119,7 +120,12 @@ pub fn project_create_from_media(
 
     let settings = settings_store(&app)?.load()?;
     let store = ProjectStore::new(PathBuf::from(&settings.data_root));
-    let project = store.create_imported_project(&input, &info, settings.import_strategy)?;
+    let project = store.create_imported_project_with_options(
+        &input,
+        &info,
+        settings.import_strategy,
+        diarization_enabled,
+    )?;
     let transcription_input = project
         .media
         .path
@@ -181,6 +187,15 @@ pub fn project_save_transcript(
 }
 
 #[tauri::command]
+pub fn project_update_speakers(
+    app: AppHandle,
+    project_id: String,
+    speakers: Vec<crate::model::TranscriptSpeaker>,
+) -> Result<crate::model::TranscriptDocument, String> {
+    project_store(&app)?.update_speakers(&project_id, speakers)
+}
+
+#[tauri::command]
 pub fn project_relink_media(
     app: AppHandle,
     project_id: String,
@@ -223,8 +238,8 @@ pub fn project_export(
 ) -> Result<(), String> {
     let detail = project_store(&app)?.read_detail(&project_id)?;
     let content = match format.as_str() {
-        "txt" => export::build_txt(&detail.transcript.segments),
-        "srt" => export::build_srt(&detail.transcript.segments),
+        "txt" => export::build_txt(&detail.transcript),
+        "srt" => export::build_srt(&detail.transcript),
         "summary" => detail
             .summary
             .as_ref()
@@ -239,6 +254,7 @@ pub fn project_export(
 pub fn recording_start(
     app: AppHandle,
     state: State<'_, AppState>,
+    diarization_enabled: bool,
 ) -> Result<RecordingStartResult, String> {
     if state
         .job
@@ -255,7 +271,7 @@ pub fn recording_start(
     }
     let runtime = resolve_runtime(&app)?;
     let store = project_store(&app)?;
-    let project = store.create_recording_project()?;
+    let project = store.create_recording_project_with_options(diarization_enabled)?;
     let path = project
         .media
         .path
@@ -366,6 +382,8 @@ pub fn recording_stop(
     let finish_app = app.clone();
     let finish_store = store.clone();
     let finish_job = job.clone();
+    let finish_path = path.clone();
+    let diarization_enabled = project.diarization.enabled;
     std::thread::spawn(move || {
         let outcome = worker
             .join()
@@ -373,10 +391,58 @@ pub fn recording_stop(
             .and_then(|value| value);
         let _ = std::fs::remove_dir_all(chunk_dir);
         match outcome {
-            Ok(pipeline::LiveOutcome::Completed(result)) => {
-                if let Err(message) =
-                    finish_store.complete_transcription(&finish_job.project_id, &result.segments)
-                {
+            Ok(pipeline::LiveOutcome::Completed(mut result)) => {
+                let applied = if diarization_enabled {
+                    let _ = finish_app.emit(
+                        "transcript://progress",
+                        crate::model::ProgressEvent {
+                            project_id: finish_job.project_id.clone(),
+                            job_id: finish_job.id.clone(),
+                            stage: "diarizing",
+                            percent: 0,
+                            processed_seconds: 0.0,
+                            total_seconds: result.duration,
+                            segment_index: 0,
+                            segment_count: 0,
+                        },
+                    );
+                    let temp_dir = finish_store
+                        .project_dir(&finish_job.project_id)
+                        .join("diarization-temp");
+                    let wav = temp_dir.join("recording-full.wav");
+                    let outcome = crate::ffmpeg::run_extract_mono_wav(
+                        &runtime.ffmpeg,
+                        &finish_path,
+                        &wav,
+                    )
+                    .and_then(|_| pipeline::diarize_wav(&finish_job, &runtime, &wav));
+                    let _ = std::fs::remove_dir_all(temp_dir);
+                    crate::diarization::apply_result(&result.segments, &[], outcome)
+                } else {
+                    crate::diarization::apply_result(
+                        &result.segments,
+                        &[],
+                        Err("说话人识别未启用".to_string()),
+                    )
+                };
+                result.segments = applied.assignment.segments.clone();
+                let document = crate::model::TranscriptDocument {
+                    schema_version: 2,
+                    project_id: finish_job.project_id.clone(),
+                    revision: 0,
+                    speakers: applied.assignment.speakers,
+                    segments: result.segments.clone(),
+                };
+                let diarization_state = if diarization_enabled {
+                    applied.state
+                } else {
+                    crate::model::DiarizationState::default()
+                };
+                if let Err(message) = finish_store.complete_transcription_document(
+                    &finish_job.project_id,
+                    &document,
+                    diarization_state,
+                ) {
                     let _ = finish_app.emit(
                         "transcript://failed",
                         FailedEvent {
@@ -634,14 +700,7 @@ pub fn ai_generate_summary(app: AppHandle, project_id: String) -> Result<AISumma
     let ai_store = ensure_ai_service_migrated(&app)?;
     let projects = project_store(&app)?;
     let detail = projects.read_detail(&project_id)?;
-    let transcript = detail
-        .transcript
-        .segments
-        .iter()
-        .map(|segment| segment.text.trim())
-        .filter(|text| !text.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let transcript = export::build_txt(&detail.transcript);
     let summary = crate::ai::generate_summary_with_failover(
         &ai_store,
         ai_store.config_dir(),
@@ -768,13 +827,13 @@ pub fn save_file_dialog(
 #[tauri::command]
 pub fn export_txt(segments_json: String, path: String) -> Result<(), String> {
     let segments = parse_segments(&segments_json)?;
-    export::write_utf8(Path::new(&path), &export::build_txt(&segments))
+    export::write_utf8(Path::new(&path), &export::build_txt_segments(&segments))
 }
 
 #[tauri::command]
 pub fn export_srt(segments_json: String, path: String) -> Result<(), String> {
     let segments = parse_segments(&segments_json)?;
-    export::write_utf8(Path::new(&path), &export::build_srt(&segments))
+    export::write_utf8(Path::new(&path), &export::build_srt_segments(&segments))
 }
 
 #[tauri::command]

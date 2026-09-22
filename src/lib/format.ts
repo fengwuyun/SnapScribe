@@ -106,8 +106,21 @@ export function buildSummaryText(summary: {
 }
 
 /** Plain text of all segments joined by newlines (copy & TXT export content). */
-export function fullText(segments: { text: string }[]): string {
-  return segments.map((s) => s.text.trim()).join("\n");
+export function fullText<
+  T extends { text: string; start?: number; speakerId?: string },
+  S extends { id: string; name: string },
+>(
+  segments: T[],
+  speakers: S[] = [] as S[],
+): string {
+  return segments.map((segment) => {
+    const name = segment.speakerId
+      ? speakers.find((speaker) => speaker.id === segment.speakerId)?.name.trim()
+      : "";
+    return name && segment.start !== undefined
+      ? `[${formatClock(segment.start)}] ${name}：${segment.text.trim()}`
+      : segment.text.trim();
+  }).join("\n");
 }
 
 /** Extensions accepted in the drop zone; mirrors the Rust open-file filter. */

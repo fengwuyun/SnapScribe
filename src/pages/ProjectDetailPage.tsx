@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Check, Clipboard, Copy, Download, ExternalLink, Link2, Pause, Pencil, Play, Save, Search, Trash2, X, XCircle } from "lucide-react";
+import { ArrowLeft, Check, Clipboard, Copy, Download, ExternalLink, Link2, Pause, Pencil, Play, Save, Search, Trash2, Users, X, XCircle } from "lucide-react";
 import { AudioPlayer, type SeekRequest } from "@/components/AudioPlayer";
 import { DeleteConfirmationDialog } from "@/components/DeleteConfirmationDialog";
 import { EditableActionItems } from "@/components/EditableActionItems";
 import { formatActionItemsForCopy } from "@/lib/actionItems";
 import { TranscriptList } from "@/components/TranscriptList";
 import { TranscribeProgress } from "@/components/TranscribeProgress";
+import { SpeakerManagerDialog } from "@/components/SpeakerManagerDialog";
 import { Button } from "@/components/ui/Button";
 import { buildExportName, buildSummaryExportName, buildSummaryText, fullText } from "@/lib/format";
 import * as ipc from "@/lib/tauri";
 import type { ProjectDetail, TranscriptionJobStatus } from "@/types/project";
 import type { ProgressEvent, TranscriptSegment } from "@/types/transcript";
+import { speakerBadgeClass, speakerDisplayName } from "@/lib/speakers";
 
 export function ProjectDetailPage({ projectId, onBack, onConfigureAI }: { projectId: string; onBack: () => void; onConfigureAI: () => void }) {
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
@@ -27,6 +29,8 @@ export function ProjectDetailPage({ projectId, onBack, onConfigureAI }: { projec
   const [deleteMediaOpen, setDeleteMediaOpen] = useState(false);
   const [deletingMedia, setDeletingMedia] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [speakerManagerOpen, setSpeakerManagerOpen] = useState(false);
+  const [savingSpeakers, setSavingSpeakers] = useState(false);
   const seekToken = useRef(0);
 
   async function load() {
@@ -120,7 +124,7 @@ export function ProjectDetailPage({ projectId, onBack, onConfigureAI }: { projec
     if (!detail) return;
     const content = tab === "summary"
       ? detail.summary ? buildSummaryText(detail.summary) : ""
-      : fullText(detail.transcript.segments);
+      : fullText(detail.transcript.segments, detail.transcript.speakers);
     if (!content) {
       setMessage(tab === "summary" ? "请先生成 AI 总结" : "暂无可复制的转录文本");
       return;
@@ -172,6 +176,20 @@ export function ProjectDetailPage({ projectId, onBack, onConfigureAI }: { projec
     setMessage("待办事项已保存");
   }
 
+  async function saveSpeakers(speakers: ProjectDetail["transcript"]["speakers"], warning?: string) {
+    setSavingSpeakers(true);
+    try {
+      await ipc.projectUpdateSpeakers(projectId, speakers);
+      setSpeakerManagerOpen(false);
+      await load();
+      setMessage(warning ?? "说话人名称已批量更新");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingSpeakers(false);
+    }
+  }
+
   if (!detail) return <div className="p-8"><button onClick={onBack}>← 返回</button><p className="mt-8 text-sm text-text-secondary">{message || "正在加载项目…"}</p></div>;
   const canDeleteMedia = detail.mediaAvailable && detail.project.media.storage !== "reference";
 
@@ -196,22 +214,24 @@ export function ProjectDetailPage({ projectId, onBack, onConfigureAI }: { projec
       </div>}
 
       <div className="flex shrink-0 gap-8 border-b border-divider">
-        <button onClick={() => setTab("transcript")} className={`border-b-2 px-1 pb-3 text-sm transition-colors duration-150 ${tab === "transcript" ? "border-primary font-semibold text-primary" : "border-transparent text-text-secondary hover:text-text-primary"}`}>转录文本</button>
-        <button onClick={() => setTab("summary")} className={`border-b-2 px-1 pb-3 text-sm transition-colors duration-150 ${tab === "summary" ? "border-primary font-semibold text-primary" : "border-transparent text-text-secondary hover:text-text-primary"}`}>AI 总结</button>
+        <button type="button" onClick={() => setTab("transcript")} className={`border-b-2 px-1 pb-3 text-sm transition-colors duration-150 ${tab === "transcript" ? "border-primary font-semibold text-primary" : "border-transparent text-text-secondary hover:text-text-primary"}`}>转录文本</button>
+        <button type="button" onClick={() => setTab("summary")} className={`border-b-2 px-1 pb-3 text-sm transition-colors duration-150 ${tab === "summary" ? "border-primary font-semibold text-primary" : "border-transparent text-text-secondary hover:text-text-primary"}`}>AI 总结</button>
       </div>
       {message && <p className="shrink-0 py-2 text-sm text-text-secondary">{message}</p>}
 
       {tab === "transcript" ? <div className="flex min-h-0 flex-1 flex-col py-3">
         <div className="mb-3 flex shrink-0 items-center justify-between gap-4">
           <label className="flex h-9 max-w-sm flex-1 items-center gap-2 rounded-md border border-line bg-surface px-3"><Search className="size-4 text-text-tertiary" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索转录内容" className="min-w-0 flex-1 bg-transparent text-sm outline-none" /></label>
-          {editing ? <div className="flex gap-2"><Button variant="secondary" className="h-9" onClick={() => { setEditing(false); setDraft(detail.transcript.segments); }}><X className="size-4" />取消</Button><Button className="h-9" onClick={() => void saveTranscript()}><Save className="size-4" />保存文本</Button></div> : <Button variant="secondary" className="h-9" onClick={() => { setDraft(detail.transcript.segments); setEditing(true); }}><Pencil className="size-4" />编辑</Button>}
+          {editing ? <div className="flex gap-2"><Button variant="secondary" className="h-9" onClick={() => { setEditing(false); setDraft(detail.transcript.segments); }}><X className="size-4" />取消</Button><Button className="h-9" onClick={() => void saveTranscript()}><Save className="size-4" />保存文本</Button></div> : <div className="flex gap-2">{detail.transcript.speakers.length > 0 && <Button variant="secondary" className="h-9" onClick={() => setSpeakerManagerOpen(true)}><Users className="size-4" />管理说话人</Button>}<Button variant="secondary" className="h-9" onClick={() => { setDraft(detail.transcript.segments); setEditing(true); }}><Pencil className="size-4" />编辑</Button></div>}
         </div>
+        {detail.project.diarization.status === "failed" && <div className="mb-3 shrink-0 rounded-md border border-[#F3D7A2] bg-[#FFF9ED] px-4 py-2.5 text-sm text-text-secondary">说话人识别未完成：{detail.project.diarization.error || "未知错误"}。转录文本不受影响。</div>}
         {!detail.mediaAvailable && <div className="mb-3 flex shrink-0 items-center justify-between rounded-md border border-[#F3D7A2] bg-[#FFF9ED] px-4 py-2.5 text-sm text-text-secondary"><span>原始媒体不可用，文本和总结仍可正常查看。</span><Button variant="secondary" className="h-8 px-3" onClick={() => void relink()}><Link2 className="size-4" />重新关联原始文件</Button></div>}
-          {editing ? <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-line bg-surface">{visibleSegments.map((segment) => <div key={segment.id} className="flex gap-4 border-b border-divider p-4 last:border-b-0"><button type="button" onClick={() => setSeekRequest({ at: segment.start, token: ++seekToken.current })} className="w-16 shrink-0 font-mono text-xs text-primary">{Math.floor(segment.start / 60).toString().padStart(2, "0")}:{Math.floor(segment.start % 60).toString().padStart(2, "0")}</button><textarea value={segment.text} onChange={(event) => setDraft((items) => items.map((item) => item.id === segment.id ? { ...item, text: event.target.value } : item))} rows={2} className="min-h-16 flex-1 resize-y rounded-md border border-line px-3 py-2 text-sm leading-6 outline-none focus:border-primary" /></div>)}</div> : <div className="flex min-h-0 flex-1"><TranscriptList segments={visibleSegments} activeSegmentId={activeSegmentId} transcribing={detail.project.status === "transcribing" && !jobStatus?.paused} nextSegmentIndex={progress?.segmentIndex ?? null} seekable={detail.mediaAvailable} onSeek={(second) => setSeekRequest({ at: second, token: ++seekToken.current })} onCopy={setMessage} /></div>}
+          {editing ? <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-line bg-surface">{visibleSegments.map((segment) => { const speaker = detail.transcript.speakers.find((item) => item.id === segment.speakerId); const speakerName = speakerDisplayName(segment.speakerId, detail.transcript.speakers); return <div key={segment.id} className="flex gap-4 border-b border-divider p-4 last:border-b-0"><button type="button" onClick={() => setSeekRequest({ at: segment.start, token: ++seekToken.current })} className="w-16 shrink-0 font-mono text-xs text-primary">{Math.floor(segment.start / 60).toString().padStart(2, "0")}:{Math.floor(segment.start % 60).toString().padStart(2, "0")}</button>{speaker && speakerName && <span className={`mt-1 inline-flex h-6 shrink-0 items-center rounded-round px-2 text-xs font-semibold ${speakerBadgeClass(speaker.colorIndex)}`}>{speakerName}</span>}<textarea value={segment.text} onChange={(event) => setDraft((items) => items.map((item) => item.id === segment.id ? { ...item, text: event.target.value } : item))} rows={2} className="min-h-16 flex-1 resize-y rounded-md border border-line px-3 py-2 text-sm leading-6 outline-none focus:border-primary" /></div>;})}</div> : <div className="flex min-h-0 flex-1"><TranscriptList segments={visibleSegments} speakers={detail.transcript.speakers} activeSegmentId={activeSegmentId} transcribing={detail.project.status === "transcribing" && !jobStatus?.paused} nextSegmentIndex={progress?.segmentIndex ?? null} seekable={detail.mediaAvailable} onSeek={(second) => setSeekRequest({ at: second, token: ++seekToken.current })} onCopy={setMessage} /></div>}
       </div> : <div className="min-h-0 flex-1 overflow-y-auto py-5">{detail.summary ? <div className="mx-auto max-w-3xl space-y-4"><section className="rounded-lg border border-line bg-surface p-6 shadow-sm"><h2 className="text-base font-semibold">摘要</h2><p className="mt-3 select-text whitespace-pre-wrap text-sm leading-7">{detail.summary.summary}</p></section><section className="rounded-lg border border-line bg-surface p-6 shadow-sm"><h2 className="text-base font-semibold">关键要点</h2><ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6">{detail.summary.keyPoints.map((item, index) => <li className="select-text" key={index}>{item}</li>)}</ul></section><section className="rounded-lg border border-line bg-surface p-6 shadow-sm"><div className="flex items-center justify-between"><h2 className="text-base font-semibold">待办事项</h2><button type="button" onClick={() => { void navigator.clipboard.writeText(formatActionItemsForCopy(detail.summary!.actionItems)).then(() => setMessage("待办事项已复制"), (error) => setMessage(String(error))); }} className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-semibold text-primary transition-colors hover:bg-primary-soft"><Copy className="size-4" />复制</button></div><EditableActionItems items={detail.summary.actionItems} onSave={saveActionItems} onError={setMessage} /></section></div> : <div className="flex h-full items-center justify-center"><div className="text-center"><h2 className="text-lg font-semibold">尚未生成 AI 总结</h2><p className="mt-2 text-sm text-text-secondary">基于当前转录文本生成摘要、关键要点和待办事项。</p><Button loading={generatingSummary} onClick={() => void generateSummary()} className="mt-6">生成 AI 总结</Button></div></div>}</div>}
 
       {detail.mediaAvailable && detail.project.media.path && <div className="shrink-0 border-t border-divider bg-bg py-3"><AudioPlayer filePath={detail.project.media.path} fileName={detail.project.media.originalFileName || detail.project.name} seekRequest={seekRequest} onTimeUpdate={setPlaybackTime} /></div>}
     </main>
     <DeleteConfirmationDialog open={deleteMediaOpen} title="删除录音文件？" description="录音文件删除后将无法播放，但转录文本和 AI 总结会继续保留。" finalDescription="此操作不可恢复。确认永久删除 SnapScribe 保存的原始录音文件吗？" busy={deletingMedia} onOpenChange={setDeleteMediaOpen} onConfirm={() => void deleteMedia()} />
+    <SpeakerManagerDialog open={speakerManagerOpen} speakers={detail.transcript.speakers} busy={savingSpeakers} onOpenChange={setSpeakerManagerOpen} onSave={(speakers, warning) => void saveSpeakers(speakers, warning)} />
   </div>;
 }

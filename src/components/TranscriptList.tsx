@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
-import type { TranscriptSegment } from "@/types/transcript";
+import type { TranscriptSegment, TranscriptSpeaker } from "@/types/transcript";
 import { formatClock } from "@/lib/format";
+import { speakerBadgeClass, speakerDisplayName } from "@/lib/speakers";
 import { cn } from "@/lib/utils";
 import { hasTextSelection } from "@/lib/textSelection";
 
@@ -17,6 +18,7 @@ export function TranscriptList({
   seekable = false,
   onSeek,
   onCopy,
+  speakers = [],
 }: {
   segments: TranscriptSegment[];
   activeSegmentId: string | null;
@@ -27,6 +29,7 @@ export function TranscriptList({
   seekable?: boolean;
   onSeek: (second: number) => void;
   onCopy?: (message: string) => void;
+  speakers?: TranscriptSpeaker[];
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const followRef = useRef(true);
@@ -60,7 +63,11 @@ export function TranscriptList({
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-lg border border-divider bg-surface"
       >
         <ul className="divide-y divide-divider">
-          {segments.map((segment) => (
+          {segments.map((segment) => {
+            const speaker = speakers.find((item) => item.id === segment.speakerId);
+            const speakerName = speakerDisplayName(segment.speakerId, speakers);
+            const copyText = speakerName ? `[${formatClock(segment.start)}] ${speakerName}：${segment.text}` : segment.text;
+            return (
             <li
               key={segment.id}
               className={cn(
@@ -73,10 +80,11 @@ export function TranscriptList({
                   <button type="button" onClick={() => onSeek(segment.start)} aria-label={`从 ${formatClock(segment.start)} 播放`} className="w-16 shrink-0 font-mono text-xs font-medium text-primary outline-none focus-visible:ring-2 focus-visible:ring-primary">
                     {formatClock(segment.start)}
                   </button>
+                  {speaker && speakerName && <span className={`mt-0.5 inline-flex h-6 shrink-0 items-center rounded-round px-2 text-xs font-semibold ${speakerBadgeClass(speaker.colorIndex)}`}>{speakerName}</span>}
                   <span
                     className="min-w-0 flex-1 cursor-text select-text text-sm text-text-primary"
                     onClick={() => { if (!hasTextSelection(window.getSelection())) onSeek(segment.start); }}
-                    onDoubleClick={() => { void navigator.clipboard.writeText(segment.text).then(() => onCopy?.("已复制该段")).catch(() => onCopy?.("复制失败")); }}
+                    onDoubleClick={() => { void navigator.clipboard.writeText(copyText).then(() => onCopy?.("已复制该段")).catch(() => onCopy?.("复制失败")); }}
                   >{segment.text}</span>
                 </div>
               ) : (
@@ -84,11 +92,12 @@ export function TranscriptList({
                   <span className="w-16 shrink-0 font-mono text-xs font-medium text-primary">
                     {formatClock(segment.start)}
                   </span>
-                  <p className="cursor-text select-text text-sm text-text-primary" onDoubleClick={() => { void navigator.clipboard.writeText(segment.text).then(() => onCopy?.("已复制该段")).catch(() => onCopy?.("复制失败")); }}>{segment.text}</p>
+                  {speaker && speakerName && <span className={`mt-0.5 inline-flex h-6 shrink-0 items-center rounded-round px-2 text-xs font-semibold ${speakerBadgeClass(speaker.colorIndex)}`}>{speakerName}</span>}
+                  <p className="cursor-text select-text text-sm text-text-primary" onDoubleClick={() => { void navigator.clipboard.writeText(copyText).then(() => onCopy?.("已复制该段")).catch(() => onCopy?.("复制失败")); }}>{segment.text}</p>
                 </div>
               )}
             </li>
-          ))}
+          );})}
         </ul>
         {transcribing && (
           <p className="px-4 py-3 text-xs text-text-tertiary">

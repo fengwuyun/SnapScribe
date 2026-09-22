@@ -5,6 +5,21 @@ export interface TranscriptSegment {
   start: number;
   end: number;
   text: string;
+  speakerId?: string;
+}
+
+export interface TranscriptSpeaker {
+  id: string;
+  name: string;
+  colorIndex: number;
+}
+
+export type DiarizationStatus = "disabled" | "provisional" | "processing" | "completed" | "failed";
+
+export interface DiarizationState {
+  enabled: boolean;
+  status: DiarizationStatus;
+  error?: string;
 }
 
 export interface TranscriptResult {
@@ -27,7 +42,7 @@ export interface HistoryEntry {
   modifiedMs: number;
 }
 
-export type TranscribeStage = "preparing" | "splitting" | "transcribing" | "paused";
+export type TranscribeStage = "preparing" | "splitting" | "transcribing" | "diarizing" | "reconcilingSpeakers" | "paused";
 
 export interface ProgressEvent {
   projectId: string;
@@ -44,6 +59,7 @@ export interface SegmentsEvent {
   projectId: string;
   jobId: string;
   segments: TranscriptSegment[];
+  speakers: TranscriptSpeaker[];
 }
 
 export interface RecordingLevelEvent {

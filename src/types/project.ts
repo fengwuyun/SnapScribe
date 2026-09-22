@@ -1,4 +1,4 @@
-import type { TranscriptSegment } from "@/types/transcript";
+import type { DiarizationState, TranscriptSegment, TranscriptSpeaker } from "@/types/transcript";
 
 export type ProjectStatus = "transcribing" | "completed" | "canceled" | "failed";
 export type MediaOrigin = "imported" | "recorded";
@@ -26,12 +26,14 @@ export interface TranscriptionProject {
   transcriptRevision: number;
   summaryRevision?: number;
   error?: string;
+  diarization: DiarizationState;
 }
 
 export interface TranscriptDocument {
   schemaVersion: number;
   projectId: string;
   revision: number;
+  speakers: TranscriptSpeaker[];
   segments: TranscriptSegment[];
 }
 

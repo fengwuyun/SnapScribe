@@ -7,6 +7,7 @@ import type {
   RecordingLevelEvent,
   SegmentsEvent,
   TranscriptSegment,
+  TranscriptSpeaker,
 } from "@/types/transcript";
 import type {
   AISummary,
@@ -96,8 +97,8 @@ export function cancelProjectTranscription(projectId: string): Promise<void> {
   return invoke("cancel_project_transcription", { projectId });
 }
 
-export function createProjectFromMedia(path: string): Promise<StartProjectResult> {
-  return invoke("project_create_from_media", { path });
+export function createProjectFromMedia(path: string, diarizationEnabled: boolean): Promise<StartProjectResult> {
+  return invoke("project_create_from_media", { path, diarizationEnabled });
 }
 
 export function projectList(query = "", sort: ProjectSort = "recentlyUpdated"): Promise<ProjectListItem[]> {
@@ -121,6 +122,13 @@ export function projectSaveTranscript(
   segments: TranscriptSegment[],
 ): Promise<TranscriptDocument> {
   return invoke("project_save_transcript", { projectId, segments });
+}
+
+export function projectUpdateSpeakers(
+  projectId: string,
+  speakers: TranscriptSpeaker[],
+): Promise<TranscriptDocument> {
+  return invoke("project_update_speakers", { projectId, speakers });
 }
 
 export function projectRelinkMedia(projectId: string, path: string): Promise<TranscriptionProject> {
@@ -207,8 +215,8 @@ export function aiModelTest(draft: AIModelDraft): Promise<AIModelStatus> {
   return invoke("ai_model_test", { draft });
 }
 
-export function recordingStart(): Promise<RecordingStartResult> {
-  return invoke("recording_start");
+export function recordingStart(diarizationEnabled: boolean): Promise<RecordingStartResult> {
+  return invoke("recording_start", { diarizationEnabled });
 }
 
 export function recordingStop(recordingId: string): Promise<StartProjectResult> {

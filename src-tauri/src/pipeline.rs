@@ -5,12 +5,13 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::asr;
-use crate::export::build_txt;
+use crate::diarization;
+use crate::export::build_txt_segments;
 use crate::ffmpeg;
 use crate::history;
 use crate::model::{
-    CanceledEvent, CompletedEvent, FailedEvent, ProgressEvent, SegmentsEvent, TranscriptResult,
-    TranscriptSegment,
+    CanceledEvent, CompletedEvent, DiarizationState, FailedEvent, ProgressEvent, SegmentsEvent,
+    TranscriptDocument, TranscriptResult, TranscriptSegment, TranscriptSpeaker,
 };
 use crate::project_store::ProjectStore;
 use crate::runtime::RuntimePaths;
@@ -30,7 +31,7 @@ pub struct ActiveJob {
 }
 
 enum Outcome {
-    Completed(TranscriptResult),
+    Completed(TranscriptResult, Vec<TranscriptSpeaker>, DiarizationState),
     Canceled,
 }
 
@@ -47,6 +48,12 @@ pub fn run_live_chunks(
     store: &ProjectStore,
 ) -> Result<LiveOutcome, String> {
     let mut all = Vec::new();
+    let mut all_speakers = Vec::new();
+    let mut next_provisional_number = 1usize;
+    let diarization_enabled = store
+        .read_project(&job.project_id)
+        .map(|project| project.diarization.enabled)
+        .unwrap_or(false);
     let mut duration = 0.0f64;
     for chunk in chunks {
         if job.canceled() {
@@ -83,11 +90,32 @@ pub fn run_live_chunks(
                 .join(" | ");
             return Err(format!("录音第 {} 段识别失败：{detail}", chunk.index));
         }
-        let next = asr::offset_cues(
+        let mut next = asr::offset_cues(
             &asr::parse_transcript_output(&output.stdout, chunk.duration_seconds),
             chunk.start_seconds,
             chunk.index as usize,
         );
+        let mut event_speakers = Vec::new();
+        if diarization_enabled {
+            if let Ok(output) = diarize_wav(job, runtime, &chunk.path) {
+                let shifted = output
+                    .turns
+                    .into_iter()
+                    .map(|turn| diarization::DiarizationTurn {
+                        start: turn.start + chunk.start_seconds,
+                        end: turn.end + chunk.start_seconds,
+                        speaker: turn.speaker,
+                    })
+                    .collect::<Vec<_>>();
+                let assignment = diarization::assign_speakers(&next, &shifted);
+                let provisional =
+                    diarization::provisionalize(assignment, next_provisional_number);
+                next_provisional_number += provisional.speakers.len();
+                event_speakers = provisional.speakers.clone();
+                all_speakers.extend(provisional.speakers);
+                next = provisional.segments;
+            }
+        }
         all.extend(next.clone());
         store.write_transcript(
             &job.project_id,
@@ -95,6 +123,7 @@ pub fn run_live_chunks(
                 schema_version: 1,
                 project_id: job.project_id.clone(),
                 revision: 0,
+                speakers: all_speakers.clone(),
                 segments: all.clone(),
             },
         )?;
@@ -105,6 +134,7 @@ pub fn run_live_chunks(
                 project_id: job.project_id.clone(),
                 job_id: job.id.clone(),
                 segments: next,
+                speakers: event_speakers,
             },
         );
         duration = duration.max(chunk.start_seconds + chunk.duration_seconds);
@@ -144,11 +174,20 @@ pub fn spawn_job(
         // Remove segment files on every exit path (completed / failed / canceled).
         let _ = std::fs::remove_dir_all(&temp_dir);
         match outcome {
-            Ok(Outcome::Completed(result)) => {
+            Ok(Outcome::Completed(result, speakers, diarization_state)) => {
                 if let Some(store) = project_store.as_ref() {
-                    if let Err(message) =
-                        store.complete_transcription(&job.project_id, &result.segments)
-                    {
+                    let document = TranscriptDocument {
+                        schema_version: 2,
+                        project_id: job.project_id.clone(),
+                        revision: 0,
+                        speakers,
+                        segments: result.segments.clone(),
+                    };
+                    if let Err(message) = store.complete_transcription_document(
+                        &job.project_id,
+                        &document,
+                        diarization_state,
+                    ) {
                         emit_ok(
                             &app,
                             "transcript://failed",
@@ -315,6 +354,7 @@ fn run(
                     schema_version: 1,
                     project_id: job.project_id.clone(),
                     revision: 0,
+                    speakers: Vec::new(),
                     segments: all.clone(),
                 },
             )?;
@@ -326,6 +366,7 @@ fn run(
                 project_id: job.project_id.clone(),
                 job_id: job.id.clone(),
                 segments: new_segments,
+                speakers: Vec::new(),
             },
         );
 
@@ -359,12 +400,91 @@ fn run(
         auto_save_history(app, &file_name, &all);
     }
 
+    let diarization_enabled = project_store
+        .and_then(|store| store.read_project(&job.project_id).ok())
+        .is_some_and(|project| project.diarization.enabled);
+    let applied = if diarization_enabled {
+        run_diarization(app, job, runtime, input, temp_dir, &all, total_seconds)
+    } else {
+        diarization::apply_result(
+            &all,
+            &[],
+            Err("说话人识别未启用".to_string()),
+        )
+    };
+    if job.canceled() {
+        return Ok(Outcome::Canceled);
+    }
+    let (segments, speakers, state) = if diarization_enabled {
+        (
+            applied.assignment.segments,
+            applied.assignment.speakers,
+            applied.state,
+        )
+    } else {
+        (all, Vec::new(), DiarizationState::default())
+    };
+
     Ok(Outcome::Completed(TranscriptResult {
         file_name,
         duration: total_seconds,
         language: None,
-        segments: all,
-    }))
+        segments,
+    }, speakers, state))
+}
+
+fn run_diarization(
+    app: &AppHandle,
+    job: &ActiveJob,
+    runtime: &RuntimePaths,
+    input: &PathBuf,
+    temp_dir: &PathBuf,
+    segments: &[TranscriptSegment],
+    total_seconds: f64,
+) -> diarization::DiarizationApplied {
+    emit_progress(app, job, "diarizing", 0, 0.0, total_seconds, 0, 0);
+    let outcome = (|| {
+        let audio = temp_dir.join("diarization-full.wav");
+        ffmpeg::run_extract_mono_wav(&runtime.ffmpeg, input, &audio)?;
+        let parsed = diarize_wav(job, runtime, &audio)?;
+        emit_progress(
+            app,
+            job,
+            "reconcilingSpeakers",
+            95,
+            total_seconds,
+            total_seconds,
+            0,
+            0,
+        );
+        Ok(parsed)
+    })();
+    diarization::apply_result(segments, &[], outcome)
+}
+
+pub(crate) fn diarize_wav(
+    job: &ActiveJob,
+    runtime: &RuntimePaths,
+    audio: &std::path::Path,
+) -> Result<diarization::DiarizationOutput, String> {
+    let diarization_runtime = runtime
+        .diarization
+        .as_ref()
+        .ok_or_else(|| "缺少本地说话人识别运行时或模型".to_string())?;
+    let child = diarization::spawn(diarization_runtime, audio)?;
+    *slot(job) = Some(child);
+    let output = asr::collect_output_shared(&job.current_child)?;
+    if !output.success {
+        let detail = output
+            .stderr
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .take(3)
+            .collect::<Vec<_>>()
+            .join(" | ");
+        return Err(format!("说话人识别失败：{detail}"));
+    }
+    diarization::parse_cli_output(&output.stdout)
 }
 
 fn slot<'a>(job: &'a ActiveJob) -> MutexGuard<'a, Option<std::process::Child>> {
@@ -382,7 +502,7 @@ fn auto_save_history(app: &AppHandle, source_file_name: &str, segments: &[Transc
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("transcript");
-    if let Err(err) = history::save_transcript(&dir, stem, &build_txt(segments)) {
+    if let Err(err) = history::save_transcript(&dir, stem, &build_txt_segments(segments)) {
         eprintln!("历史保存失败（不影响转写结果）: {err}");
     }
 }

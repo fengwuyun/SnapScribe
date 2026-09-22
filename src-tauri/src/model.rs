@@ -259,6 +259,8 @@ pub struct TranscriptionProject {
     pub summary_revision: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default)]
+    pub diarization: DiarizationState,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -267,7 +269,37 @@ pub struct TranscriptDocument {
     pub schema_version: u32,
     pub project_id: String,
     pub revision: u32,
+    #[serde(default)]
+    pub speakers: Vec<TranscriptSpeaker>,
     pub segments: Vec<TranscriptSegment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptSpeaker {
+    pub id: String,
+    pub name: String,
+    pub color_index: u8,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum DiarizationStatus {
+    #[default]
+    Disabled,
+    Provisional,
+    Processing,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DiarizationState {
+    pub enabled: bool,
+    pub status: DiarizationStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -381,6 +413,8 @@ pub struct TranscriptSegment {
     pub start: f64,
     pub end: f64,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker_id: Option<String>,
 }
 
 /// Full transcription result for one media file.
@@ -434,6 +468,7 @@ pub struct SegmentsEvent {
     pub project_id: String,
     pub job_id: String,
     pub segments: Vec<TranscriptSegment>,
+    pub speakers: Vec<TranscriptSpeaker>,
 }
 
 /// Payload of the `transcript://completed` event.
@@ -463,7 +498,34 @@ pub struct CanceledEvent {
 
 #[cfg(test)]
 mod project_event_tests {
-    use super::{AboutInfo, ProgressEvent, TranscriptionJobStatus};
+    use super::{AboutInfo, ProgressEvent, SegmentsEvent, TranscriptDocument, TranscriptSpeaker, TranscriptionJobStatus};
+
+    #[test]
+    fn segments_event_serializes_speaker_updates() {
+        let value = serde_json::to_value(SegmentsEvent {
+            project_id: "p1".into(),
+            job_id: "j1".into(),
+            segments: Vec::new(),
+            speakers: vec![TranscriptSpeaker {
+                id: "speaker-1".into(),
+                name: "说话人 1".into(),
+                color_index: 0,
+            }],
+        })
+        .unwrap();
+
+        assert_eq!(value["speakers"][0]["name"], "说话人 1");
+    }
+
+    #[test]
+    fn transcript_v1_defaults_speaker_fields() {
+        let old = r#"{"schemaVersion":1,"projectId":"p1","revision":1,"segments":[{"id":"s1","start":0.0,"end":1.0,"text":"你好"}]}"#;
+
+        let document: TranscriptDocument = serde_json::from_str(old).unwrap();
+
+        assert!(document.speakers.is_empty());
+        assert_eq!(document.segments[0].speaker_id, None);
+    }
 
     #[test]
     fn progress_event_serializes_project_and_job_scope() {

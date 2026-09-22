@@ -33,6 +33,55 @@ pub fn build_segment_args(input: &Path, seg_pattern: &Path) -> Vec<String> {
     .collect()
 }
 
+pub fn build_mono_wav_args(input: &Path, output: &Path) -> Vec<String> {
+    [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        input.to_string_lossy().as_ref(),
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-c:a",
+        "pcm_s16le",
+        output.to_string_lossy().as_ref(),
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
+pub fn run_extract_mono_wav(ffmpeg: &Path, input: &Path, output: &Path) -> Result<(), String> {
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| format!("无法创建临时目录：{error}"))?;
+    }
+    let mut command = Command::new(ffmpeg);
+    crate::proc::hide_console(&mut command);
+    let result = command
+        .args(build_mono_wav_args(input, output))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|error| format!("无法启动 ffmpeg：{error}"))?;
+    if !result.status.success() {
+        let detail = String::from_utf8_lossy(&result.stderr)
+            .lines()
+            .take(3)
+            .collect::<Vec<_>>()
+            .join(" | ");
+        return Err(format!("说话人识别音频准备失败：{detail}"));
+    }
+    output
+        .is_file()
+        .then_some(())
+        .ok_or_else(|| "说话人识别音频准备失败：未生成 WAV 文件".to_string())
+}
+
 /// Run the extract+split conversion and return the produced segment files in
 /// playback order.
 pub fn run_extract_split(
@@ -166,6 +215,17 @@ mod tests {
         assert!(joined.contains("-c:a pcm_s16le"));
         assert!(joined.contains("-segment_time 60"));
         assert!(joined.ends_with("seg_%04d.wav"));
+    }
+
+    #[test]
+    fn mono_wav_args_create_full_sixteen_kilohertz_pcm_file() {
+        let args = build_mono_wav_args(Path::new("meeting.mp4"), Path::new("full.wav"));
+        let joined = args.join(" ");
+        assert!(joined.contains("-ac 1"));
+        assert!(joined.contains("-ar 16000"));
+        assert!(joined.contains("-c:a pcm_s16le"));
+        assert!(!joined.contains("-f segment"));
+        assert!(joined.ends_with("full.wav"));
     }
 
     #[test]

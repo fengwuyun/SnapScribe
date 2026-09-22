@@ -8,6 +8,14 @@ pub struct RuntimePaths {
     pub asr_exe: PathBuf,
     pub asr_model: PathBuf,
     pub vad_model: PathBuf,
+    pub diarization: Option<DiarizationRuntime>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DiarizationRuntime {
+    pub exe: PathBuf,
+    pub segmentation_model: PathBuf,
+    pub embedding_model: PathBuf,
 }
 
 impl RuntimePaths {
@@ -58,6 +66,22 @@ impl RuntimePaths {
                 display_dirs(&model_dirs)
             )
         })?;
+        let diarization = find_file(&bases, "sherpa-onnx-offline-speaker-diarization.exe")
+            .and_then(|exe| {
+                let segmentation_model = find_relative(
+                    &model_dirs,
+                    Path::new("speaker-segmentation").join("model.int8.onnx"),
+                )?;
+                let embedding_model = find_relative(
+                    &model_dirs,
+                    Path::new("speaker-embedding").join("3dspeaker.onnx"),
+                )?;
+                Some(DiarizationRuntime {
+                    exe,
+                    segmentation_model,
+                    embedding_model,
+                })
+            });
 
         Ok(Self {
             ffmpeg,
@@ -65,6 +89,7 @@ impl RuntimePaths {
             asr_exe,
             asr_model,
             vad_model,
+            diarization,
         })
     }
 }
@@ -100,6 +125,13 @@ fn candidate_bases(resource_dir: Option<&Path>) -> Vec<PathBuf> {
 fn find_file(dirs: &[PathBuf], name: &str) -> Option<PathBuf> {
     dirs.iter().find_map(|dir| {
         let candidate = dir.join(name);
+        candidate.is_file().then_some(candidate)
+    })
+}
+
+fn find_relative(dirs: &[PathBuf], relative: PathBuf) -> Option<PathBuf> {
+    dirs.iter().find_map(|dir| {
+        let candidate = dir.join(&relative);
         candidate.is_file().then_some(candidate)
     })
 }
@@ -182,5 +214,43 @@ mod tests {
         assert!(runtime.asr_model.starts_with(&fake));
         assert!(runtime.vad_model.starts_with(&fake));
         std::fs::remove_dir_all(&fake).ok();
+    }
+
+    #[test]
+    fn resolves_optional_diarization_layout() {
+        let fake = std::env::temp_dir().join(format!(
+            "snapscribe-diarization-install-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let bin = fake.join("resources").join("bin");
+        let models = fake.join("resources").join("models");
+        std::fs::create_dir_all(models.join("speaker-segmentation")).unwrap();
+        std::fs::create_dir_all(models.join("speaker-embedding")).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+        for name in ["ffmpeg.exe", "ffprobe.exe", "llama-funasr-sensevoice.exe"] {
+            std::fs::write(bin.join(name), b"x").unwrap();
+        }
+        std::fs::write(bin.join("sherpa-onnx-offline-speaker-diarization.exe"), b"x").unwrap();
+        for name in ["sensevoice-small-q8.gguf", "fsmn-vad.gguf"] {
+            std::fs::write(models.join(name), b"x").unwrap();
+        }
+        std::fs::write(
+            models.join("speaker-segmentation").join("model.int8.onnx"),
+            b"x",
+        )
+        .unwrap();
+        std::fs::write(
+            models.join("speaker-embedding").join("3dspeaker.onnx"),
+            b"x",
+        )
+        .unwrap();
+
+        let runtime = RuntimePaths::resolve(Some(&fake)).unwrap();
+        let diarization = runtime.diarization.expect("diarization should resolve");
+
+        assert!(diarization.exe.starts_with(&fake));
+        assert!(diarization.segmentation_model.starts_with(&fake));
+        assert!(diarization.embedding_model.starts_with(&fake));
+        std::fs::remove_dir_all(fake).ok();
     }
 }

@@ -1,11 +1,31 @@
 use std::path::Path;
 
-use crate::model::{AISummary, TranscriptSegment};
+use crate::model::{AISummary, TranscriptDocument, TranscriptSegment};
 
 /// Plain-text full transcript: one line per segment, UTF-8, no timestamps.
-pub fn build_txt(segments: &[TranscriptSegment]) -> String {
+pub fn build_txt(document: &TranscriptDocument) -> String {
+    build_txt_with_speakers(&document.segments, &document.speakers)
+}
+
+pub fn build_txt_segments(segments: &[TranscriptSegment]) -> String {
+    build_txt_with_speakers(segments, &[])
+}
+
+fn build_txt_with_speakers(
+    segments: &[TranscriptSegment],
+    speakers: &[crate::model::TranscriptSpeaker],
+) -> String {
     let mut out = String::new();
     for segment in segments {
+        if let Some(name) = segment
+            .speaker_id
+            .as_deref()
+            .and_then(|id| speakers.iter().find(|speaker| speaker.id == id))
+            .map(|speaker| speaker.name.trim())
+            .filter(|name| !name.is_empty())
+        {
+            out.push_str(&format!("[{}] {name}：", clock_time(segment.start)));
+        }
         out.push_str(segment.text.trim());
         out.push('\n');
     }
@@ -13,7 +33,18 @@ pub fn build_txt(segments: &[TranscriptSegment]) -> String {
 }
 
 /// Standard SRT subtitle text built from globally-timed segments.
-pub fn build_srt(segments: &[TranscriptSegment]) -> String {
+pub fn build_srt(document: &TranscriptDocument) -> String {
+    build_srt_with_speakers(&document.segments, &document.speakers)
+}
+
+pub fn build_srt_segments(segments: &[TranscriptSegment]) -> String {
+    build_srt_with_speakers(segments, &[])
+}
+
+fn build_srt_with_speakers(
+    segments: &[TranscriptSegment],
+    speakers: &[crate::model::TranscriptSpeaker],
+) -> String {
     let mut out = String::new();
     for (index, segment) in segments.iter().enumerate() {
         out.push_str(&(index + 1).to_string());
@@ -23,10 +54,32 @@ pub fn build_srt(segments: &[TranscriptSegment]) -> String {
             srt_time(segment.start.max(0.0)),
             srt_time(segment.end.max(segment.start.max(0.0))),
         ));
+        if let Some(name) = segment
+            .speaker_id
+            .as_deref()
+            .and_then(|id| speakers.iter().find(|speaker| speaker.id == id))
+            .map(|speaker| speaker.name.trim())
+            .filter(|name| !name.is_empty())
+        {
+            out.push_str(name);
+            out.push('：');
+        }
         out.push_str(segment.text.trim());
         out.push_str("\n\n");
     }
     out
+}
+
+fn clock_time(secs: f64) -> String {
+    let total = secs.max(0.0).floor() as u64;
+    let hours = total / 3600;
+    let minutes = (total % 3600) / 60;
+    let seconds = total % 60;
+    if hours > 0 {
+        format!("{hours:02}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes:02}:{seconds:02}")
+    }
 }
 
 pub fn build_summary_txt(summary: &AISummary) -> String {
@@ -78,18 +131,46 @@ mod tests {
             start,
             end,
             text: text.into(),
+            speaker_id: None,
         }
     }
 
     #[test]
+    fn speaker_aware_exports_use_display_names() {
+        let document = crate::model::TranscriptDocument {
+            schema_version: 2,
+            project_id: "p1".into(),
+            revision: 1,
+            speakers: vec![crate::model::TranscriptSpeaker {
+                id: "speaker-1".into(),
+                name: "刘德华".into(),
+                color_index: 0,
+            }],
+            segments: vec![crate::model::TranscriptSegment {
+                id: "s1".into(),
+                start: 17.0,
+                end: 20.0,
+                text: "这里是第一段。".into(),
+                speaker_id: Some("speaker-1".into()),
+            }],
+        };
+
+        assert_eq!(build_txt(&document), "[00:17] 刘德华：这里是第一段。\n");
+        assert_eq!(
+            build_srt(&document),
+            "1\n00:00:17,000 --> 00:00:20,000\n刘德华：这里是第一段。\n\n"
+        );
+    }
+
+    #[test]
     fn txt_is_one_line_per_segment() {
-        let txt = build_txt(&[seg(0.0, 1.0, "第一句"), seg(2.0, 3.0, "第二句")]);
+        let txt = build_txt_segments(&[seg(0.0, 1.0, "第一句"), seg(2.0, 3.0, "第二句")]);
         assert_eq!(txt, "第一句\n第二句\n");
     }
 
     #[test]
     fn srt_uses_comma_millis_and_global_times() {
-        let srt = build_srt(&[seg(3661.5, 3665.25, "内容")]);
+        let srt = build_srt_segments(&[seg(3661.5, 3665.25, "内容")]);
         assert_eq!(srt, "1\n01:01:01,500 --> 01:01:05,250\n内容\n\n");
     }
 

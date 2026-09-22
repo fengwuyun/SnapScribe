@@ -6,8 +6,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 
 use crate::model::{
-    ActionItem, AISummary, ImportStrategy, MediaInfo, MediaOrigin, MediaReference, MediaStorage, ProjectDetail,
-    ProjectListItem, ProjectSort, ProjectStatus, TranscriptDocument, TranscriptionProject,
+    ActionItem, AISummary, DiarizationState, ImportStrategy, MediaInfo, MediaOrigin, MediaReference,
+    MediaStorage, ProjectDetail, ProjectListItem, ProjectSort, ProjectStatus, TranscriptDocument,
+    TranscriptSpeaker, TranscriptionProject,
 };
 
 #[derive(Clone)]
@@ -29,6 +30,16 @@ impl ProjectStore {
         source: &Path,
         info: &MediaInfo,
         strategy: ImportStrategy,
+    ) -> Result<TranscriptionProject, String> {
+        self.create_imported_project_with_options(source, info, strategy, false)
+    }
+
+    pub fn create_imported_project_with_options(
+        &self,
+        source: &Path,
+        info: &MediaInfo,
+        strategy: ImportStrategy,
+        diarization_enabled: bool,
     ) -> Result<TranscriptionProject, String> {
         if !source.is_file() {
             return Err(format!("文件不存在：{}", source.display()));
@@ -66,7 +77,7 @@ impl ProjectStore {
 
         let now = utc_timestamp();
         let project = TranscriptionProject {
-            schema_version: 1,
+            schema_version: 2,
             id: id.clone(),
             name: source
                 .file_stem()
@@ -89,11 +100,21 @@ impl ProjectStore {
             transcript_revision: 0,
             summary_revision: None,
             error: None,
+            diarization: if diarization_enabled {
+                DiarizationState {
+                    enabled: true,
+                    status: crate::model::DiarizationStatus::Processing,
+                    error: None,
+                }
+            } else {
+                DiarizationState::default()
+            },
         };
         let transcript = TranscriptDocument {
-            schema_version: 1,
+            schema_version: 2,
             project_id: id,
             revision: 0,
+            speakers: Vec::new(),
             segments: Vec::new(),
         };
         atomic_write_json(&dir.join("project.json"), &project)?;
@@ -104,7 +125,10 @@ impl ProjectStore {
         Ok(project)
     }
 
-    pub fn create_recording_project(&self) -> Result<TranscriptionProject, String> {
+    pub fn create_recording_project_with_options(
+        &self,
+        diarization_enabled: bool,
+    ) -> Result<TranscriptionProject, String> {
         let id = uuid::Uuid::new_v4().to_string();
         let dir = self.project_dir(&id);
         let media_dir = dir.join("media");
@@ -112,7 +136,7 @@ impl ProjectStore {
         let path = media_dir.join("recording.wav");
         let now = utc_timestamp();
         let project = TranscriptionProject {
-            schema_version: 1,
+            schema_version: 2,
             id: id.clone(),
             name: format!("录音 {now}"),
             created_at: now.clone(),
@@ -130,14 +154,24 @@ impl ProjectStore {
             transcript_revision: 0,
             summary_revision: None,
             error: None,
+            diarization: if diarization_enabled {
+                DiarizationState {
+                    enabled: true,
+                    status: crate::model::DiarizationStatus::Provisional,
+                    error: None,
+                }
+            } else {
+                DiarizationState::default()
+            },
         };
         atomic_write_json(&dir.join("project.json"), &project)?;
         atomic_write_json(
             &dir.join("transcript.json"),
             &TranscriptDocument {
-                schema_version: 1,
+                schema_version: 2,
                 project_id: id,
                 revision: 0,
+                speakers: Vec::new(),
                 segments: Vec::new(),
             },
         )?;
@@ -154,7 +188,7 @@ impl ProjectStore {
         std::fs::create_dir_all(&dir).map_err(|e| format!("无法创建旧记录项目：{e}"))?;
         let now = utc_timestamp();
         let project = TranscriptionProject {
-            schema_version: 1,
+            schema_version: 2,
             id: id.clone(),
             name: validate_project_name(name)?,
             created_at: now.clone(),
@@ -172,16 +206,19 @@ impl ProjectStore {
             transcript_revision: 1,
             summary_revision: None,
             error: None,
+            diarization: DiarizationState::default(),
         };
         let transcript = TranscriptDocument {
-            schema_version: 1,
+            schema_version: 2,
             project_id: id,
             revision: 1,
+            speakers: Vec::new(),
             segments: vec![crate::model::TranscriptSegment {
                 id: "legacy-1".to_string(),
                 start: 0.0,
                 end: 0.0,
                 text: text.to_string(),
+                speaker_id: None,
             }],
         };
         atomic_write_json(&dir.join("project.json"), &project)?;
@@ -332,19 +369,35 @@ impl ProjectStore {
         project_id: &str,
         segments: &[crate::model::TranscriptSegment],
     ) -> Result<(), String> {
-        let mut project = self.read_project(project_id)?;
-        let next_revision = project.transcript_revision.saturating_add(1);
-        let transcript = TranscriptDocument {
-            schema_version: 1,
+        let project = self.read_project(project_id)?;
+        let document = TranscriptDocument {
+            schema_version: 2,
             project_id: project_id.to_string(),
-            revision: next_revision,
+            revision: 0,
+            speakers: Vec::new(),
             segments: segments.to_vec(),
         };
+        self.complete_transcription_document(project_id, &document, project.diarization)
+    }
+
+    pub fn complete_transcription_document(
+        &self,
+        project_id: &str,
+        document: &TranscriptDocument,
+        diarization: DiarizationState,
+    ) -> Result<(), String> {
+        let mut project = self.read_project(project_id)?;
+        let next_revision = project.transcript_revision.saturating_add(1);
+        let mut transcript = document.clone();
+        transcript.schema_version = 2;
+        transcript.project_id = project_id.to_string();
+        transcript.revision = next_revision;
         self.write_transcript(project_id, &transcript)?;
         project.status = ProjectStatus::Completed;
         project.transcript_revision = next_revision;
         project.updated_at = utc_timestamp();
         project.error = None;
+        project.diarization = diarization;
         atomic_write_json(&self.project_dir(project_id).join("project.json"), &project)
     }
 
@@ -354,7 +407,10 @@ impl ProjectStore {
             &self.project_dir(project_id).join("transcript.json"),
             "转录文档",
         )?;
-        let revision = project.transcript_revision.saturating_add(1);
+        let revision = project
+            .transcript_revision
+            .max(transcript.revision)
+            .saturating_add(1);
         transcript.revision = revision;
         self.write_transcript(project_id, &transcript)?;
         project.status = ProjectStatus::Canceled;
@@ -385,11 +441,66 @@ impl ProjectStore {
         let mut project = self.read_project(project_id)?;
         let revision = project.transcript_revision.saturating_add(1);
         let document = TranscriptDocument {
-            schema_version: 1,
+            schema_version: 2,
             project_id: project_id.to_string(),
             revision,
+            speakers: self
+                .read_detail(project_id)?
+                .transcript
+                .speakers,
             segments,
         };
+        self.write_transcript(project_id, &document)?;
+        project.transcript_revision = revision;
+        project.updated_at = utc_timestamp();
+        atomic_write_json(&self.project_dir(project_id).join("project.json"), &project)?;
+        Ok(document)
+    }
+
+    pub fn update_speakers(
+        &self,
+        project_id: &str,
+        speakers: Vec<TranscriptSpeaker>,
+    ) -> Result<TranscriptDocument, String> {
+        let mut project = self.read_project(project_id)?;
+        let mut document: TranscriptDocument = read_json(
+            &self.project_dir(project_id).join("transcript.json"),
+            "转录文档",
+        )?;
+        let known_ids = document
+            .speakers
+            .iter()
+            .map(|speaker| speaker.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        if speakers.len() != known_ids.len() {
+            return Err("说话人列表与当前项目不匹配".to_string());
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut normalized = Vec::with_capacity(speakers.len());
+        for mut speaker in speakers {
+            if !known_ids.contains(speaker.id.as_str()) || !seen.insert(speaker.id.clone()) {
+                return Err("说话人列表与当前项目不匹配".to_string());
+            }
+            speaker.name = speaker.name.trim().to_string();
+            if speaker.name.is_empty() {
+                return Err("说话人名称不能为空".to_string());
+            }
+            normalized.push(speaker);
+        }
+        normalized.sort_by_key(|speaker| {
+            document
+                .speakers
+                .iter()
+                .position(|current| current.id == speaker.id)
+                .unwrap_or(usize::MAX)
+        });
+        let revision = project
+            .transcript_revision
+            .max(document.revision)
+            .saturating_add(1);
+        document.schema_version = 2;
+        document.revision = revision;
+        document.speakers = normalized;
         self.write_transcript(project_id, &document)?;
         project.transcript_revision = revision;
         project.updated_at = utc_timestamp();
@@ -558,7 +669,8 @@ mod tests {
 
     use super::ProjectStore;
     use crate::model::{
-        ActionItem, AISummary, ImportStrategy, MediaInfo, ProjectSort, TranscriptDocument, TranscriptSegment,
+        ActionItem, AISummary, ImportStrategy, MediaInfo, ProjectSort, TranscriptDocument,
+        TranscriptSegment, TranscriptSpeaker,
     };
 
     fn temp_root(label: &str) -> PathBuf {
@@ -592,6 +704,40 @@ mod tests {
         assert_eq!(created.media.storage.as_str(), "reference");
         assert_eq!(created.media.path.as_deref(), source.to_str());
         assert!(!store.project_dir(&created.id).join("media").exists());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn creates_project_with_diarization_requested() {
+        let root = temp_root("diarization-enabled");
+        let source = root.join("source").join("meeting.wav");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, b"RIFF").unwrap();
+        let store = ProjectStore::new(root.join("data"));
+
+        let created = store
+            .create_imported_project_with_options(
+                &source,
+                &media_info(),
+                ImportStrategy::Reference,
+                true,
+            )
+            .unwrap();
+
+        assert!(created.diarization.enabled);
+        assert_eq!(created.diarization.status, crate::model::DiarizationStatus::Processing);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn creates_recording_with_diarization_requested() {
+        let root = temp_root("recording-diarization");
+        let store = ProjectStore::new(root.join("data"));
+
+        let created = store.create_recording_project_with_options(true).unwrap();
+
+        assert!(created.diarization.enabled);
+        assert_eq!(created.diarization.status, crate::model::DiarizationStatus::Provisional);
         std::fs::remove_dir_all(root).ok();
     }
 
@@ -658,11 +804,13 @@ mod tests {
             schema_version: 1,
             project_id: project.id.clone(),
             revision: 1,
+            speakers: Vec::new(),
             segments: vec![TranscriptSegment {
                 id: "segment-1".to_string(),
                 start: 0.0,
                 end: 1.0,
                 text: "保留的文本".to_string(),
+                speaker_id: None,
             }],
         };
         store.write_transcript(&project.id, &transcript).unwrap();
@@ -704,11 +852,13 @@ mod tests {
                     schema_version: 1,
                     project_id: project.id.clone(),
                     revision: 1,
+                    speakers: Vec::new(),
                     segments: vec![TranscriptSegment {
                         id: "segment-1".to_string(),
                         start: 0.0,
                         end: 1.0,
                         text: "讨论产品发布节奏".to_string(),
+                        speaker_id: None,
                     }],
                 },
             )
@@ -756,6 +906,7 @@ mod tests {
             start: 0.0,
             end: 1.0,
             text: "完成内容".to_string(),
+            speaker_id: None,
         }];
 
         store
@@ -767,6 +918,56 @@ mod tests {
         assert_eq!(detail.project.transcript_revision, 1);
         assert_eq!(detail.transcript.revision, 1);
         assert_eq!(detail.transcript.segments[0].text, "完成内容");
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn completing_diarization_persists_speakers_and_nonfatal_state() {
+        let root = temp_root("complete-diarization");
+        let source = root.join("source").join("meeting.wav");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, b"RIFF").unwrap();
+        let store = ProjectStore::new(root.join("data"));
+        let project = store
+            .create_imported_project_with_options(
+                &source,
+                &media_info(),
+                ImportStrategy::Reference,
+                true,
+            )
+            .unwrap();
+        let document = TranscriptDocument {
+            schema_version: 2,
+            project_id: project.id.clone(),
+            revision: 0,
+            speakers: vec![TranscriptSpeaker {
+                id: "speaker-1".into(),
+                name: "说话人 1".into(),
+                color_index: 0,
+            }],
+            segments: vec![TranscriptSegment {
+                id: "s1".into(),
+                start: 0.0,
+                end: 1.0,
+                text: "内容".into(),
+                speaker_id: Some("speaker-1".into()),
+            }],
+        };
+        let state = crate::model::DiarizationState {
+            enabled: true,
+            status: crate::model::DiarizationStatus::Completed,
+            error: None,
+        };
+
+        store
+            .complete_transcription_document(&project.id, &document, state)
+            .unwrap();
+        let detail = store.read_detail(&project.id).unwrap();
+
+        assert_eq!(detail.project.status.as_str(), "completed");
+        assert_eq!(detail.project.diarization.status, crate::model::DiarizationStatus::Completed);
+        assert_eq!(detail.transcript.speakers[0].name, "说话人 1");
+        assert_eq!(detail.transcript.segments[0].speaker_id.as_deref(), Some("speaker-1"));
         std::fs::remove_dir_all(root).ok();
     }
 
@@ -787,11 +988,13 @@ mod tests {
                     schema_version: 1,
                     project_id: project.id.clone(),
                     revision: 0,
+                    speakers: Vec::new(),
                     segments: vec![TranscriptSegment {
                         id: "partial-1".to_string(),
                         start: 0.0,
                         end: 1.0,
                         text: "已经识别的内容".to_string(),
+                        speaker_id: None,
                     }],
                 },
             )
@@ -820,6 +1023,60 @@ mod tests {
         assert_eq!(detail.project.status.as_str(), "completed");
         assert!(!detail.media_available);
         assert_eq!(detail.transcript.segments[0].text, "保留下来的转录文本");
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn batch_rename_only_updates_display_name() {
+        let root = temp_root("speaker-rename");
+        let source = root.join("source").join("meeting.wav");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, b"RIFF").unwrap();
+        let store = ProjectStore::new(root.join("data"));
+        let project = store
+            .create_imported_project(&source, &media_info(), ImportStrategy::Reference)
+            .unwrap();
+        store
+            .write_transcript(
+                &project.id,
+                &TranscriptDocument {
+                    schema_version: 2,
+                    project_id: project.id.clone(),
+                    revision: 1,
+                    speakers: vec![TranscriptSpeaker {
+                        id: "speaker-1".into(),
+                        name: "说话人 1".into(),
+                        color_index: 0,
+                    }],
+                    segments: vec![TranscriptSegment {
+                        id: "segment-1".into(),
+                        start: 1.25,
+                        end: 3.5,
+                        text: "保持原文".into(),
+                        speaker_id: Some("speaker-1".into()),
+                    }],
+                },
+            )
+            .unwrap();
+
+        let updated = store
+            .update_speakers(
+                &project.id,
+                vec![TranscriptSpeaker {
+                    id: "speaker-1".into(),
+                    name: "  刘德华  ".into(),
+                    color_index: 0,
+                }],
+            )
+            .unwrap();
+
+        assert_eq!(updated.revision, 2);
+        assert_eq!(updated.speakers[0].name, "刘德华");
+        assert_eq!(updated.segments[0].id, "segment-1");
+        assert_eq!(updated.segments[0].start, 1.25);
+        assert_eq!(updated.segments[0].end, 3.5);
+        assert_eq!(updated.segments[0].text, "保持原文");
+        assert_eq!(updated.segments[0].speaker_id.as_deref(), Some("speaker-1"));
         std::fs::remove_dir_all(root).ok();
     }
 }

@@ -160,6 +160,7 @@ pub fn offset_cues(
             start: offset_seconds + cue.start,
             end: offset_seconds + cue.end,
             text: cue.text.clone(),
+            speaker_id: None,
         })
         .collect()
 }

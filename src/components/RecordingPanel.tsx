@@ -3,7 +3,7 @@ import { Mic, Pause, Play, Square, X } from "lucide-react";
 import { TranscriptList } from "@/components/TranscriptList";
 import { Button } from "@/components/ui/Button";
 import { formatClock } from "@/lib/format";
-import type { TranscriptSegment } from "@/types/transcript";
+import type { TranscriptSegment, TranscriptSpeaker } from "@/types/transcript";
 
 function RecordingWaveform({ levels, paused }: { levels: number[]; paused: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -49,6 +49,8 @@ export function RecordingPanel({
   stopping,
   levels,
   segments,
+  speakers,
+  diarizationEnabled,
   onTogglePause,
   onStop,
   onCancel,
@@ -58,6 +60,8 @@ export function RecordingPanel({
   stopping: boolean;
   levels: number[];
   segments: TranscriptSegment[];
+  speakers: TranscriptSpeaker[];
+  diarizationEnabled: boolean;
   onTogglePause: () => void;
   onStop: () => void;
   onCancel: () => void;
@@ -84,9 +88,9 @@ export function RecordingPanel({
     <div className="flex h-[250px] min-h-0 flex-col px-6 py-5">
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2"><Mic className="size-4 text-primary" /><h2 className="text-sm font-semibold">近实时字幕</h2></div>
-        <span className="text-xs text-text-tertiary">已接收 {segments.length} 段</span>
+        <span className="text-xs text-text-tertiary">{diarizationEnabled ? "说话人标签将在录音结束后校正 · " : ""}已接收 {segments.length} 段</span>
       </div>
-      <TranscriptList segments={segments} activeSegmentId={null} transcribing={!paused && !stopping} nextSegmentIndex={Math.floor(seconds / 15) + 1} onSeek={() => {}} />
+      <TranscriptList segments={segments} speakers={speakers} activeSegmentId={null} transcribing={!paused && !stopping} nextSegmentIndex={Math.floor(seconds / 15) + 1} onSeek={() => {}} />
     </div>
   </section>;
 }

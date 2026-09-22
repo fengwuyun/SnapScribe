@@ -113,6 +113,13 @@ describe("fullText", () => {
     expect(fullText([{ text: " 第一句 " }, { text: "第二句" }])).toBe("第一句\n第二句");
     expect(fullText([])).toBe("");
   });
+
+  it("includes timestamp and editable speaker name when diarization data exists", () => {
+    expect(fullText(
+      [{ id: "segment-1", start: 17, end: 20, text: " 大家好 ", speakerId: "speaker-1" }],
+      [{ id: "speaker-1", name: "刘德华", colorIndex: 0 }],
+    )).toBe("[00:17] 刘德华：大家好");
+  });
 });
 
 describe("isAcceptedFile", () => {

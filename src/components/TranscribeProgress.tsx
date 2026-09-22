@@ -36,6 +36,10 @@ export function TranscribeProgress({
       ? "转录已暂停"
     : progress.stage === "transcribing"
       ? `正在转写 ${fileName}`
+      : progress.stage === "diarizing"
+        ? "正在区分说话人…"
+        : progress.stage === "reconcilingSpeakers"
+          ? "正在校正说话人标签…"
       : progress.stage === "splitting"
         ? "正在提取音频并切片…"
         : "正在读取媒体信息…";
