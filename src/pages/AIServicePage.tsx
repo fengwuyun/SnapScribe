@@ -98,6 +98,6 @@ export function AIServicePage({ focusModels = false, returnToProjectId, onReturn
     </section>
     {message && <p className={`mt-4 text-sm ${message.includes("已保存") ? "text-success" : "text-error"}`}>{message}</p>}
     <AIModelDialog open={dialogOpen} model={selected} onOpenChange={setDialogOpen} onSaved={() => void load()} />
-    <DeleteConfirmationDialog open={deleteTarget !== null} title="删除模型配置？" description={`将删除“${deleteTarget?.name ?? ""}”的配置与本机密钥。`} finalDescription="此操作无法撤销，但不会影响已经生成的 AI 总结。" busy={deleting} onOpenChange={(open) => !open && setDeleteTarget(null)} onConfirm={() => void remove()} />
+    <DeleteConfirmationDialog open={deleteTarget !== null} title="删除模型配置？" description={`将删除“${deleteTarget?.name ?? ""}”的配置与本机密钥。此操作无法撤销，但不会影响已经生成的 AI 总结。`} busy={deleting} onOpenChange={(open) => !open && setDeleteTarget(null)} onConfirm={() => void remove()} />
   </div>;
 }

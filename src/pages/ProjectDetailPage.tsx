@@ -231,7 +231,7 @@ export function ProjectDetailPage({ projectId, onBack, onConfigureAI }: { projec
 
       {detail.mediaAvailable && detail.project.media.path && <div className="shrink-0 border-t border-divider bg-bg py-3"><AudioPlayer filePath={detail.project.media.path} fileName={detail.project.media.originalFileName || detail.project.name} seekRequest={seekRequest} onTimeUpdate={setPlaybackTime} /></div>}
     </main>
-    <DeleteConfirmationDialog open={deleteMediaOpen} title="删除录音文件？" description="录音文件删除后将无法播放，但转录文本和 AI 总结会继续保留。" finalDescription="此操作不可恢复。确认永久删除 SnapScribe 保存的原始录音文件吗？" busy={deletingMedia} onOpenChange={setDeleteMediaOpen} onConfirm={() => void deleteMedia()} />
+    <DeleteConfirmationDialog open={deleteMediaOpen} title="删除录音文件？" description="录音文件删除后将无法播放，但转录文本和 AI 总结会继续保留。此操作不可恢复。" busy={deletingMedia} onOpenChange={setDeleteMediaOpen} onConfirm={() => void deleteMedia()} />
     <SpeakerManagerDialog open={speakerManagerOpen} speakers={detail.transcript.speakers} busy={savingSpeakers} onOpenChange={setSpeakerManagerOpen} onSave={(speakers, warning) => void saveSpeakers(speakers, warning)} />
   </div>;
 }

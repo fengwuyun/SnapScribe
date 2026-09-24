@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Download, ExternalLink, Pencil, Search, Trash2 } from "lucide-react";
 import { DeleteConfirmationDialog } from "@/components/DeleteConfirmationDialog";
+import { ProjectContextMenu } from "@/components/ProjectContextMenu";
 import { SortDropdown } from "@/components/SortDropdown";
 import type { AppRoute } from "@/lib/navigation";
 import * as ipc from "@/lib/tauri";
@@ -20,6 +21,7 @@ export function LibraryPage({ onNavigate }: { onNavigate: (route: AppRoute) => v
   const [items, setItems] = useState<ProjectListItem[]>([]);
   const [error, setError] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<ProjectListItem | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ project: ProjectListItem; x: number; y: number } | null>(null);
   const [deleting, setDeleting] = useState(false);
 
   async function refresh() {
@@ -70,7 +72,7 @@ export function LibraryPage({ onNavigate }: { onNavigate: (route: AppRoute) => v
     {error && <p className="mt-3 text-sm text-error">{error}</p>}
     <div className="mt-4 overflow-hidden rounded-lg border border-line bg-surface">
       <div className="grid grid-cols-[180px_72px_120px_minmax(140px,1fr)_156px] gap-3 border-b border-divider px-5 py-3 text-xs text-text-tertiary"><span>项目名称</span><span>时长</span><span>来源</span><span>创建时间</span><span>操作</span></div>
-      {items.length === 0 ? <p className="py-12 text-center text-sm text-text-tertiary">没有匹配的转录项目</p> : items.map((project) => <div key={project.id} className="grid grid-cols-[180px_72px_120px_minmax(140px,1fr)_156px] items-center gap-3 border-b border-divider px-5 py-3.5 transition-colors duration-150 last:border-b-0 hover:bg-[#F8F9FF]">
+      {items.length === 0 ? <p className="py-12 text-center text-sm text-text-tertiary">没有匹配的转录项目</p> : items.map((project) => <div key={project.id} onContextMenu={(event) => { event.preventDefault(); setContextMenu({ project, x: event.clientX, y: event.clientY }); }} className="grid grid-cols-[180px_72px_120px_minmax(140px,1fr)_156px] items-center gap-3 border-b border-divider px-5 py-3.5 transition-colors duration-150 last:border-b-0 hover:bg-[#F8F9FF]">
         <button type="button" title={project.name} onClick={() => onNavigate({ page: "project", projectId: project.id, from: "library" })} className="truncate text-left text-sm font-semibold hover:text-primary"><HighlightedProjectName name={project.name} query={query} /></button>
         <span className="font-mono text-xs text-text-secondary">{formatClock(project.durationSecs)}</span>
         <span className="text-xs text-text-secondary">{project.media.storage === "reference" ? "导入（引用）" : "SnapScribe 保存"}</span>
@@ -83,11 +85,21 @@ export function LibraryPage({ onNavigate }: { onNavigate: (route: AppRoute) => v
         </div>
       </div>)}
     </div>
+    {contextMenu && <ProjectContextMenu
+      project={contextMenu.project}
+      x={contextMenu.x}
+      y={contextMenu.y}
+      onClose={() => setContextMenu(null)}
+      onOpen={() => onNavigate({ page: "project", projectId: contextMenu.project.id, from: "library" })}
+      onRename={() => void rename(contextMenu.project)}
+      onExport={() => void exportTxt(contextMenu.project)}
+      onOpenLocation={() => void openLocation(contextMenu.project)}
+      onDelete={() => setDeleteTarget(contextMenu.project)}
+    />}
     <DeleteConfirmationDialog
       open={deleteTarget !== null}
       title="删除转录项目？"
-      description={`“${deleteTarget?.name ?? ""}”的转录文本和 AI 总结也会被删除。`}
-      finalDescription="此操作不可恢复。确认永久删除该转录项目及其全部数据吗？"
+      description={`“${deleteTarget?.name ?? ""}”的转录文本和 AI 总结也会被删除。此操作不可恢复。`}
       busy={deleting}
       onOpenChange={(open) => !open && setDeleteTarget(null)}
       onConfirm={() => void remove()}
